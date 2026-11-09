@@ -44,6 +44,7 @@ The kernel sources remain under their own upstream licences.
 | --- | --- | --- |
 | Audio output and capture | `I2S` card, AK4558 codec, stereo, 44.1 kHz | `AudioDevice` gives a fixed 128-frame stereo S32 callback with input and output blocks; partial I/O and underruns are handled outside the callback |
 | Microphone, line input, speaker and jacks | DAPM pin switches `Builtin Microphone`, `TRS`, `Builtin Speaker`; headphone/line-out detection | `HardwareMixer` lists live ALSA controls, types, ranges, enum labels and jack values; validates changes and restores changed values on normal exit |
+| Jack detection | `hp-det-gpio` GPIO3_B0 and `out-det-gpio` GPIO3_B1 on the I2S simple-audio-card, debounced by the kernel | `JackDetect` follows the `Headphones Jack` and `Line Out Jack` card controls through ALSA control events; the runtime calls `App::jack()` on every plug and unplug |
 | Surface inputs and outputs | UART3, 4,000,000 baud, `Control Surface` raw MIDI | `HardwareMidi` receives all channel, pressure, system-common, realtime and bounded SysEx messages; queues complete outbound messages |
 | External MIDI | UART5, 31,250 baud, `External MIDI` raw MIDI | The same discovered bidirectional MIDI interface; incoming channel messages play the demo synth at their native MIDI pitches |
 | USB host MIDI | Kernel USB audio/MIDI driver | Input/output subdevices are discovered and reopened after hotplug; disconnect and read failure panic the demo synth |
@@ -112,6 +113,7 @@ python3 device.py ctl monitor 0
 python3 device.py ctl gain 75
 python3 device.py ctl brightness 5
 python3 device.py ctl clock
+python3 device.py ctl jacks
 python3 device.py ctl usb-output
 ```
 
@@ -213,6 +215,53 @@ above it. That is fine for recording ideas and monitoring, not for
 mastering. From the buffer sizes, audio reaches the computer about 45 ms after the jacks. If the
 computer plays its input straight back to the MPC while an app monitors
 USB-C input, the audio loops; the demos never monitor USB-C input.
+
+## Jack detection
+
+Headphones and line out are the only jacks the AC50 can tell are plugged.
+The device tree gives the I2S card `simple-audio-card,hp-det-gpio`
+(GPIO3_B0) and `simple-audio-card,out-det-gpio` (GPIO3_B1), both active
+high. The kernel's `simple_util_init_jack()` (`simple-card-utils.c`) makes
+each a jack: it debounces the GPIO for 150 ms, the ASoC jack core powers the
+`Headphones` or `Line Out Jack` DAPM pin to match, and the state is reported
+as the read-only boolean card control `Headphones Jack` or `Line Out Jack`.
+Line in (`TRS`), the sync jacks and the MIDI jacks have no detection switch.
+
+`JackDetect` ([src/drivers/jacks.h](../src/drivers/jacks.h)) opens its own
+control handle on the card and subscribes to its events, so the mixer's
+handle never fills with events and the controls are read only when the card
+reports something. The service thread polls it, without blocking, on every
+pass (a few milliseconds apart). It reports every jack whose state differs
+from the last one reported:
+
+| Stage | What happens |
+| --- | --- |
+| Startup | Both controls are read when the runtime opens the hardware. The first poll reports each jack with `initial` set, before the app's first `service()`. |
+| Plug or unplug | The kernel queues a control event. The next poll drains every queued event, reads both jacks once and reports the jack that changed, about 150 ms after the contact moved. An event that changes no jack, such as a mixer write, reports nothing. |
+| Control gone | A jack whose control cannot be read becomes unknown (-1) without a report. When it returns it is reported with `initial` set again, not as a plug. |
+| Card gone | A failed event read closes the handle; both jacks are unknown and the card is reopened at most once a second. |
+| No events | If the card refuses an event subscription, both jacks are re-read once a second instead. |
+
+The runtime stores each state where every thread can read it,
+`Session::plugged(Jack)`, then calls `App::jack(event, hardware)` on the
+service thread. `Hardware::jacks` is a read-only view for `service()` and
+`command()`. `status` reports `headphones=` and `line_out=` (1 plugged in, 0
+empty, -1 unknown), and the `jacks` command returns JSON:
+
+```sh
+python3 device.py ctl jacks
+```
+
+`available` and `events` say whether the card is open and subscribed; then,
+for `headphones` and `line_out`, the control name, `plugged` (1, 0 or -1),
+`changes` (plugs and unplugs since startup, not counting initial states)
+and `timestamp_ns`, the monotonic time of the last report. Event timestamps
+are when sample-base read the control, not the GPIO edge.
+
+Nothing is rerouted on a plug: the kernel already powers the jack's pin, and
+the built-in speaker stays as `Builtin Speaker Switch` was left. One reading
+on the device found it off with headphones plugged in. An app that wants the
+speaker to follow the jacks sets that switch in `jack()`.
 
 ## Input recording showcase
 
@@ -380,7 +429,7 @@ estimated: a value the device does not report shows `n/a`.
 | --- | --- | --- |
 | Health | CPU load, each core's load and 24 seconds of history; memory used of total; CPU and GPU temperatures; supply voltage, type and `online`; power key state and presses; backlight level of its maximum | `Platform::cpu_times()` (`/proc/stat`), `memory()` (`/proc/meminfo`, `MemAvailable`), `temperatures()` (the `cpu-thermal` and `gpu-thermal` zones), `supplies()` (`voltage_now`), `backlight()`; `PowerButton` |
 | Audio | Audio engine running time, output and input peaks, capture state, playback and capture recoveries; USB-C device controller state; USB-C audio in and out: state, rate, underruns, xruns, the output's drift trim and the input's opens | `Session::audio`; `Platform::usb_state()`; `UsbAudioInput::stats()` and `UsbAudioOutput::stats()` |
-| Ports | Each open MIDI port, which directions are open and whether it is the surface; dropped sends and input errors; whether headphones and line out are plugged in | The MIDI thread's port scan (`HardwareMidi::open_ports()`); `HardwareMixer::switch_value()` on the `Headphones Jack` and `Line Out Jack` card controls |
+| Ports | Each open MIDI port, which directions are open and whether it is the surface; dropped sends and input errors; whether headphones and line out are plugged in | The MIDI thread's port scan (`HardwareMidi::open_ports()`); `JackDetect::state()` (see Jack detection) |
 | Storage | Each mounted block device once (bind mounts of it are left out): path, file system, read-only, free of total | `Platform::storage()`: `/proc/self/mountinfo` and `statvfs()` |
 
 The demo's service hook reads all of it every 500 ms while the page is open,
@@ -392,8 +441,8 @@ engine's atomics directly. The supply is a voltage: the AC50 has no battery
 gauge, so no percentage is shown.
 
 `Hardware` gives every app the same sources: the mixer and platform as
-before, plus read-only views of the power key, `UsbAudioOutput` and the MIDI
-ports as last scanned.
+before, plus read-only views of the power key, the jacks, `UsbAudioOutput`
+and the MIDI ports as last scanned.
 
 | Control | Action |
 | --- | --- |
@@ -574,7 +623,8 @@ capacity is not displayed as zero and supply `online` is not treated as a
 battery shutdown threshold.
 
 Codec reset, speaker/mic power, mute delays, headphone detection and regulators
-belong to their kernel drivers and ALSA routing. The application does not
+belong to their kernel drivers and ALSA routing; `JackDetect` only reads
+what detection reports. The application does not
 write those GPIOs or codec registers directly. It does not rebuild the kernel,
 reconfigure the USB gadget or replace system services.
 

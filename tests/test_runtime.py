@@ -39,6 +39,14 @@ class RuntimeTests(unittest.TestCase):
                             extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=5)
 
+    def test_jack_detection_events_initial_states_and_card_loss(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "jacks"
+            symbols = ("snd_ctl_open", "snd_ctl_close", "snd_ctl_subscribe_events", "snd_ctl_read", "snd_ctl_elem_read")
+            compile_fixture(binary, "tests/jacks.cpp", "src/drivers/jacks.cpp", "src/drivers/platform.cpp",
+                            extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
+            subprocess.run([str(binary)], check=True, timeout=10)
+
     def test_midi_hotplug_partial_output_and_disconnect_panic(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "midi-ports"
@@ -134,6 +142,11 @@ class RuntimeTests(unittest.TestCase):
                     self.assertTrue(command(bad).startswith("ERR"), bad)
                 power = json.loads(command("power")[3:])
                 self.assertEqual((power["key"], power["presses"]), ("KEY_POWER", 0))
+                jacks = json.loads(command("jacks")[3:])  # No I2S card here: unknown, never reported.
+                self.assertEqual((jacks["available"], jacks["jacks"]["headphones"]["plugged"], jacks["jacks"]["line_out"]["changes"]),
+                                 (False, -1, 0))
+                self.assertIn("headphones=-1 line_out=-1 push_exit=", command("status"))
+                self.assertTrue(command("jacks now").startswith("ERR"))
 
                 def recorder(until=lambda state: True):
                     for _ in range(300):

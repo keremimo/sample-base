@@ -99,6 +99,14 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   the original stereo volume and route without briefly enabling both inputs.
   Reading a jack or switch by name returns its value, and -1 for a missing
   or non-boolean control or without the card.
+- Mock ALSA control events verify jack detection: both jacks reported once
+  as initial, in order; no reads while nothing is queued; one report for a
+  plug and one for an unplug, however many events queued with it; nothing
+  for an event that changes no jack; a vanished control going unknown and
+  returning as initial, not as a plug; a lost card closing and reopening
+  only after a second; once-a-second re-reads when the card refuses events;
+  and the `jacks` JSON. The headless app test reads `jacks` and the
+  `headphones=-1 line_out=-1` status fields without an I2S card.
 - Injected sysfs/proc fixtures cover power, missing battery capacity,
   backlight bounds/restoration, USB state, temperatures and mount decoding,
   including spaces in mount paths and read-only mounts. The `/proc` reader
@@ -176,7 +184,8 @@ Source references and offline tests do not qualify every
 electrical route, latency, sound or device interoperability.
 
 Physical pad/knob/button response, LED brightness steps, listening, microphone/line
-selection, headphone/speaker behavior, USB and TRS MIDI, USB PCM formats,
+selection, headphone/speaker behavior, plugging and unplugging headphones
+and line out while sample-base runs, USB and TRS MIDI, USB PCM formats,
 backlight changes, sync jacks, storage removal, suspend/resume, wheel return,
 crash restoration and sustained full-polyphony/underrun behavior require
 hardware confirmation. The pad and control maps are measured, but the

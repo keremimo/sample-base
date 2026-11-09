@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "drivers/audio.h"
+#include "drivers/jacks.h"
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -26,6 +27,11 @@ struct Session {
     std::atomic<unsigned> midi_send_errors {0};
 
     std::atomic<bool> push_exit {true}; // Wheel Push returns to the stock app.
+
+    // Headphones and line out: 1 plugged, 0 empty, -1 unknown. The service
+    // thread writes each before App::jack() hears of the change.
+    std::atomic<int> jacks[jack_count] {{-1}, {-1}};
+    int plugged(Jack jack) const { return jacks[unsigned(jack)].load(); }
 
     // A remote tool such as control calibration owns the screen while
     // `prompting`: the runtime draws the prompt instead of the app, and apps

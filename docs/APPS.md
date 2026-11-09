@@ -42,7 +42,7 @@ both rules.
 | --- | --- | --- |
 | `src/surface/` | MIDI parsing and the measured control-surface maps: buttons and knobs (`controls.h`), pads (`pads.h`), lights (`leds.h`), even-looking LED colours (`led_colours.h`) | `dsp/` |
 | `src/dsp/` | Realtime-safe audio pieces: PCM decoding, rate conversion and a lock-free frame ring (`frame_ring.h`), the input recorder (`recorder.h`) | `surface/` |
-| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, USB-C audio in and out, sync jacks, power key, platform files, storage service | `surface/`, `dsp/` |
+| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, jack detection, USB-C audio in and out, sync jacks, power key, platform files, storage service | `surface/`, `dsp/` |
 | `src/runtime/` | Hosts one app: `App`, the threads, the control socket and its commands, `status`, options and screen helpers | `drivers/`, `surface/`, `dsp/` |
 | `src/demos/`, `src/starter/`, your app | Apps | all of the above, not each other |
 | `src/main.cpp` | Picks the app with `--app` and runs one mode | everything |
@@ -63,6 +63,7 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 | `lights(lights, now)` | MIDI | Every 5 ms. Ask for pad, fader, bank and button lights; only changes go to the surface. |
 | `draw(g)` | screen | Every 75 ms. Paint the whole 320 × 240 screen. `load_typeface()` in `runtime/screen.h` gives the device font. |
 | `service(hardware)` | service | Every few milliseconds. Slow work: mixer routes, storage, files. |
+| `jack(event, hardware)` | service | Headphones or line out plugged or unplugged (`drivers/jacks.h`), about 150 ms after the contact moved. Each jack also arrives once with `event.initial` set when its state is first known, so routing can follow the jacks from the start. |
 | `command(action, argument, hardware)` | service | A `--ctl` command the runtime does not know. Return the reply, or nothing. |
 | `command_names()`, `status()` | service | Your command names for the error reply, and extra `key=value` fields for `status`. |
 
@@ -71,12 +72,14 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 - the pads held now, the last pad and its velocity;
 - the last control touched;
 - audio peaks and recoveries;
+- whether headphones and line out are plugged in, `session().plugged(Jack::Headphones)`;
 - whether a remote prompt owns the screen.
 
-`Hardware` gives `service()` and `command()` the mixer (routes and jack
-detection), platform (backlight, power, temperatures, CPU load, memory and
-storage space), storage service and sync jacks, plus read-only views of the
-power key, the USB-C audio output and the MIDI ports as last scanned.
+`Hardware` gives `service()`, `jack()` and `command()` the mixer (routes),
+platform (backlight, power, temperatures, CPU load, memory and storage
+space), storage service and sync jacks, plus read-only views of the power
+key, jack detection, the USB-C audio output and the MIDI ports as last
+scanned.
 Anything else in `src/drivers/`, such as `UsbAudioInput`, an app can own
 itself. The system demo (`src/demos/system/`) reads all of these.
 
@@ -100,6 +103,9 @@ itself. The system demo (`src/demos/system/`) reads all of these.
   button presses alone while `session().prompting` is set.
 - **MIDI ports:** found by name, reopened after USB hotplug, and the surface
   positions requested at startup.
+- **Jacks:** headphone and line-out detection followed through ALSA control
+  events, in `session()` for every thread, `jack()` on each change and the
+  `jacks` command. Nothing is rerouted unless the app does it.
 
 ## Examples
 

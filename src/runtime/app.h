@@ -12,6 +12,7 @@
 
 class ClockIo;
 class HardwareMixer;
+class JackDetect;
 class Platform;
 class PowerButton;
 class SystemServices;
@@ -30,13 +31,14 @@ struct SurfaceEvent {
 
 // Hardware an app may use from the service thread only, in App::service()
 // and App::command(). The runtime owns it and restores it on exit. The
-// last three are read-only views of what the runtime runs itself.
+// last four are read-only views of what the runtime runs itself.
 struct Hardware {
     HardwareMixer& mixer;
     Platform& platform;
     SystemServices& services;
     ClockIo& clock;
     const PowerButton& power;         // The power key, polled on this thread
+    const JackDetect& jacks;          // Headphones and line out, polled on this thread
     const UsbAudioOutput& usb_output; // What a computer records over USB-C
     const MidiPorts& midi;            // MIDI ports as last scanned, once a second
 };
@@ -79,6 +81,12 @@ public:
 
     // Service thread, every few milliseconds: slow work such as mixer routes.
     virtual void service(Hardware&) {}
+    // Service thread: headphones or line out plugged or unplugged, about
+    // 150 ms after the contact moved (the kernel's debounce); session()
+    // already says so. Each jack also arrives once with `initial` set when its
+    // state is first known, normally before the first service(), so an app
+    // can set its routing from the start.
+    virtual void jack(const JackEvent&, Hardware&) {}
     // Service thread: an app's own control command, `action` then the rest
     // of the line. Return the reply ("OK ..." or "ERR ..."), or nothing for a
     // command the app does not know. The runtime's commands come first.

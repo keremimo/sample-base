@@ -77,8 +77,8 @@ as a voltage: the AC50 has no battery gauge, so there is no percentage. The
 right button above the screen (or **Knob FX** again) returns to the synth.
 
 Presets, sequences longer than one bar, saved patterns, project
-storage and saving takes are future work. The reusable base also supplies audio input, mixer and
-jack controls, USB-C audio to a computer (whatever the app plays), bidirectional MIDI and hotplug, pad/button/bank lights,
+storage and saving takes are future work. The reusable base also supplies audio input, mixer
+controls, headphone and line-out plug detection, USB-C audio to a computer (whatever the app plays), bidirectional MIDI and hotplug, pad/button/bank lights,
 display/backlight, sync GPIO,
 power, thermal, CPU and memory telemetry, storage-service integration and session recovery.
 See [docs/HARDWARE.md](docs/HARDWARE.md) for APIs, commands and reference wiring.
@@ -166,7 +166,7 @@ and a layer only includes the ones before it in this table;
 | --- | --- |
 | `src/surface/` | MIDI parsing and the measured control-surface maps: buttons and knobs, pads, lights and LED colours |
 | `src/dsp/` | Realtime-safe audio pieces: PCM decoding, rate conversion, a lock-free frame ring and the input recorder |
-| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, USB-C audio, sync, power key, platform files, storage service |
+| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, jack detection, USB-C audio, sync, power key, platform files, storage service |
 | `src/runtime/` | Hosts one app: the `App` interface (`app.h`), threads, control socket and commands, `status`, options, screen helpers |
 | `src/demos/` | The proofs of concept as one app, one folder each (below) |
 | `src/starter/` | The smallest complete app, to copy for your own |

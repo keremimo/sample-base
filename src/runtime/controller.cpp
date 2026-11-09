@@ -50,6 +50,11 @@ void Controller::record_surface_packets() {
 // Service thread. Platform requests that may block too long for the MIDI thread.
 void Controller::poll_platform(Session& session) {
     clock.poll(); services.poll();
+    jacks.poll([&](const JackEvent& event) {
+        session.jacks[unsigned(event.jack)].store(event.plugged ? 1 : 0);
+        app.jack(event, hardware);
+    });
+    for (unsigned n = 0; n < jack_count; ++n) session.jacks[n].store(jacks.state(Jack(n))); // -1 once the card is lost.
     app.service(hardware);
     if (power.poll()) session.last_input.store(pack_last_input(InputKind::Power, 0, power.pressed()));
     if (services.stopping()) session.running.store(false);

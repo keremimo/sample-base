@@ -2,6 +2,7 @@
 #pragma once
 #include "drivers/clock_io.h"
 #include "drivers/hardware_midi.h"
+#include "drivers/jacks.h"
 #include "drivers/mixer.h"
 #include "drivers/platform.h"
 #include "drivers/power_button.h"
@@ -20,7 +21,8 @@ class ControlServer;
 
 // Owns the MPC hardware and runs two threads over it for one App:
 //   run()       service thread: control commands, App::service() and the
-//               slow platform requests (sync clock, storage service, power key)
+//               slow platform requests (sync clock, storage service, power
+//               key, jack detection)
 //   run_midi()  MIDI thread, started by run(): surface and external MIDI,
 //               App::surface()/midi()/lights() and MIDI output
 // MIDI polling never waits on the slow requests. The threads hand work to
@@ -59,6 +61,7 @@ private:
     // Hardware, opened in this order.
     HardwareMidi midi;
     HardwareMixer mixer;
+    JackDetect jacks;
     Platform platform;
     SystemServices services;
     ClockIo clock;
@@ -76,7 +79,7 @@ private:
     MidiQueue<4, MidiCatalog> catalog_updates;
 
     // What App::service() and App::command() may use.
-    Hardware hardware {mixer, platform, services, clock, power, usb_output, catalog.ports};
+    Hardware hardware {mixer, platform, services, clock, power, jacks, usb_output, catalog.ports};
 
     // Service thread asks, MIDI thread acts.
     MidiQueue<32, MidiSendRequest> midi_output;

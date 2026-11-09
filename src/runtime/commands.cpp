@@ -69,6 +69,7 @@ std::string Controller::command(Session& session, const std::string& text) {
     if (action == "clock-out" && (argument == "0" || argument == "1"))
         return clock.output(argument == "1") ? "OK sync output updated" : "ERR sync output unavailable";
     if (action == "power" && argument.empty()) return "OK " + power.json();
+    if (action == "jacks" && argument.empty()) return "OK " + jacks.json();
     if (action == "usb-output") return usb_output_command(argument);
     if (action == "storage" && argument.empty()) return "OK {\"generation\":" + std::to_string(services.storage_generation()) + ",\"state\":" + services.storage_json() + '}';
     if (action == "storage-mount" || action == "storage-unmount")
@@ -78,7 +79,7 @@ std::string Controller::command(Session& session, const std::string& text) {
     auto reply = app.command(action, argument, hardware);
     if (!reply.empty()) return reply;
     auto names = app.command_names();
-    return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, led, midi, midi-send, mixer, mixer-set, "
+    return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, jacks, led, midi, midi-send, mixer, mixer-set, "
            "brightness, storage, storage-mount, storage-unmount, usb-output, audition, screenshot, clock, clock-in, clock-out or stock" +
            (names.empty() ? std::string() : "; app: " + names);
 }

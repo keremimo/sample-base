@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "demos/system/system_demo.h"
-#include "drivers/mixer.h"
+#include "drivers/jacks.h"
 #include "drivers/platform.h"
 #include "drivers/power_button.h"
 #include "drivers/usb_audio.h"
@@ -49,8 +49,8 @@ void SystemReader::service(DemoState& state, Hardware& hardware, Clock::time_poi
         readings.ports.push_back({port.name, port.input, port.output, port.surface});
     }
     readings.send_drops = hardware.midi.send_drops; readings.input_errors = hardware.midi.input_errors;
-    readings.headphones = hardware.mixer.switch_value("Headphones Jack");
-    readings.line_out = hardware.mixer.switch_value("Line Out Jack");
+    readings.headphones = hardware.jacks.state(Jack::Headphones);
+    readings.line_out = hardware.jacks.state(Jack::LineOut);
 
     if (now >= next_storage) {
         next_storage = now + std::chrono::milliseconds(storage_ms);
