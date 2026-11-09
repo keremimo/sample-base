@@ -4,6 +4,7 @@
 #include "midi.h"
 #include "recorder.h"
 #include "usb_audio.h"
+#include "app/pad_touch.h"
 #include "app/page.h"
 #include "app/synth.h"
 #include <atomic>
@@ -50,6 +51,9 @@ struct AppState {
     std::atomic<uint8_t> source {uint8_t(InputSource::Off)}, channels {uint8_t(InputChannels::Stereo)};
     std::atomic<int> source_request {-1}; // MIDI thread asks, service thread applies.
     std::atomic<float> input_left {0}, input_right {0}; // Decaying peaks of the selected source.
+
+    // Pad velocity and pressure showcase: every pad's latest strike and pressure.
+    PadTouches pads;
 
     std::atomic<Page> page {Page::Synth};
     std::atomic<unsigned> light_position {0}; // Light show position in ms; the MIDI thread writes it.

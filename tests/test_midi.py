@@ -28,3 +28,10 @@ class MidiTests(unittest.TestCase):
             subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
                             "-I" + str(ROOT / "src"), str(ROOT / "tests/light_show.cpp"), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=20)
+
+    def test_pad_touch_force_colours_and_pressure_trace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "pad-touch"
+            subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-I" + str(ROOT / "src"), str(ROOT / "tests/pad_touch.cpp"), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=20)

@@ -6,15 +6,18 @@
 
 namespace {
 // The buttons above the screen are soft keys for the labels drawn under
-// them, so on the synth page they only open the recorder. Sample toggles the
-// recorder page and Pad FX the light show.
+// them, so on the synth page they only open the recorder and on the pad page
+// only the right one does anything. Sample toggles the recorder page, Pad FX
+// the light show and 16 Levels the pad touch page.
 void press_button(AppState& state, SurfaceButton button) {
     auto page = state.page.load();
-    bool recorder = page == Page::Recorder, lights_page = page == Page::Lights;
+    bool recorder = page == Page::Recorder, lights_page = page == Page::Lights, pads_page = page == Page::Pads;
     switch (button) {
     case SurfaceButton::Sample: state.page.store(recorder ? Page::Synth : Page::Recorder); break;
     case SurfaceButton::PadFx: state.page.store(lights_page ? Page::Synth : Page::Lights); break;
+    case SurfaceButton::SixteenLevels: state.page.store(pads_page ? Page::Synth : Page::Pads); break;
     case SurfaceButton::TopLeft: {
+        if (pads_page) break;
         if (lights_page) { state.scene_request.store(next_light_scene(state, -1)); break; }
         if (recorder) {
             // The service thread applies the source; step from one still pending.
@@ -25,6 +28,7 @@ void press_button(AppState& state, SurfaceButton button) {
         state.page.store(Page::Recorder); break;
     }
     case SurfaceButton::TopMiddle:
+        if (pads_page) break;
         if (lights_page) { state.scene_request.store(next_light_scene(state, 1)); break; }
         if (recorder && input_has_channels(InputSource(state.source.load())))
             state.channels.store(uint8_t(next_input_channels(InputChannels(state.channels.load()))));
@@ -54,10 +58,17 @@ void play_pad(AppState& state, MidiEvent event) {
     int pad = pad_index(event);
     if (pad < 0) return;
     unsigned kind = event.status & 0xf0;
-    if (kind == 0xa0) return; // Polyphonic pressure is not used.
+    // Pressure is shown on the pad page; it does not change the sound.
+    if (kind == 0xa0) { state.pads.press(unsigned(pad), event.value); return; }
     bool down = kind == 0x90 && event.value != 0;
-    if (down) { state.held.fetch_or(1u << pad); state.last_pad.store(pad); state.velocity.store(event.value); }
-    else state.held.fetch_and(~(1u << pad));
+    // The touch is recorded before the pad counts as held, so the lights
+    // never see a held pad with the previous strike's velocity.
+    if (down) {
+        state.pads.strike(unsigned(pad), event.value);
+        state.held.fetch_or(1u << pad); state.last_pad.store(pad); state.velocity.store(event.value);
+    } else {
+        state.held.fetch_and(~(1u << pad)); state.pads.release(unsigned(pad));
+    }
     state.queue.push({uint8_t(down ? 0x90 : 0x80), pad_scale_notes[pad], down ? event.value : uint8_t(0)});
 }
 

@@ -253,7 +253,11 @@ printed-number order. Their channel-10 note numbers are:
 `37, 36, 42, 82, 40, 38, 46, 44, 48, 47, 45, 43, 49, 55, 51, 53`.
 `src/pads.h` is the shared map for routing and screen labels; pad 1 plays C4,
 pad 2 D4, through pad 16 D6. Note-off, velocity-zero release and polyphonic
-pressure use the same physical map. The earlier sequential 36–51 assumption
+pressure use the same physical map. A held pad sends polyphonic pressure on
+its own note: 0 straight after the note-on, a new value whenever the
+pressure changes, and 0 again just before the note-off. The captures so far
+reached pressure 16; the full range has not been measured, so the pad touch
+page shows raw values 0–127. The earlier sequential 36–51 assumption
 was incorrect. This changes note routing, not sensor sensitivity or factory
 calibration.
 

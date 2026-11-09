@@ -9,10 +9,11 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Twenty-six regression tests pass on Linux ARM64. On macOS, seventeen
+- Twenty-seven regression tests pass on Linux ARM64. On macOS, eighteen
   portable tests pass and nine Linux-specific tests are skipped. The build
-  also renders the recorder and light show page previews
-  `build/preview-recorder.png` and `build/preview-lights.png`.
+  also renders the recorder, light show and pad touch page previews
+  `build/preview-recorder.png`, `build/preview-lights.png` and
+  `build/preview-pads.png`.
 - Recorder fixtures cover L + R / L / R selection, mono microphone mixing,
   S16_LE, S24_3LE and S32_LE conversion, 44.1/48/32 kHz linear rate
   conversion, ring priming, underrun re-priming, overflow and flush, takes
@@ -34,6 +35,13 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   only values the hardware accepts, every light used, at least 100 colours
   per pad and each frame within one 48-message update. The headless app test
   drives `page lights`, `lights N|next|previous` and their errors.
+- Pad touch fixtures check that a strike resets pressure and peak, that
+  pressure raises the peak and release keeps the strike, that the screen
+  trace sees a press shorter than a frame, out-of-range pads, the strike
+  flash settling to its resting share, pressure taking over, force colours
+  within 0–127 from blue to full red, release fades and the bank meter.
+  The headless app test opens `page pads` and reads `pressure` and
+  `peak_pressure` from `status`.
 - Control-map fixtures cover every measured button and control number,
   channel separation from pads, release by note-off or velocity zero, signed
   wheel steps, main-volume gain and the lossless surface log. A fake control

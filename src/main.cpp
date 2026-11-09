@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
         case Options::Mode::Preview: return write_synth_preview(options.file, options.prompt);
         case Options::Mode::PreviewRecorder: return write_recorder_preview(options.file);
         case Options::Mode::PreviewLights: return write_lights_preview(options.file, options.light_position);
+        case Options::Mode::PreviewPads: return write_pads_preview(options.file);
         case Options::Mode::Hardware: return print_hardware();
         }
     } catch (const std::exception& error) {

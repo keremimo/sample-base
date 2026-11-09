@@ -49,7 +49,7 @@ std::string Controller::command(AppState& state, const std::string& text) {
     }
     if (action == "page") {
         auto name = std::find(page_names.begin(), page_names.end(), argument);
-        if (name == page_names.end()) return "ERR use page synth, recorder or lights";
+        if (name == page_names.end()) return "ERR use page synth, recorder, lights or pads";
         state.page.store(Page(name - page_names.begin())); return "OK page " + argument;
     }
     if (action == "lights") return lights_command(state, argument);

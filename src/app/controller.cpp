@@ -104,7 +104,7 @@ void Controller::run_midi(AppState& state) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         // Leave a dark surface rather than a frozen show frame.
-        if (light_driver.show_running()) {
+        if (light_driver.lights_in_use()) {
             lights.all_off();
             lights.update(send_surface, 64);
             midi.flush();

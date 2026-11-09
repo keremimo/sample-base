@@ -18,6 +18,7 @@ Options parse_options(int argc, char** argv) {
         return options;
     }
     if (offline("--preview-recorder", 2, 2)) { options.mode = Mode::PreviewRecorder; options.file = argv[2]; return options; }
+    if (offline("--preview-pads", 2, 2)) { options.mode = Mode::PreviewPads; options.file = argv[2]; return options; }
     if (offline("--preview-lights", 2, 3)) {
         // By default, mid-way through the rainbow.
         options.mode = Mode::PreviewLights; options.file = argv[2]; options.light_position = light_scene_start(3) + 1800;

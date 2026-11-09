@@ -18,6 +18,15 @@ struct RecorderView {
     std::array<uint8_t, columns> waveform {};
 };
 
+// Snapshot of the pad touch page for one frame. The trace keeps one sample
+// per screen frame, oldest first: about five seconds at 75 ms a frame.
+struct PadsView {
+    static constexpr unsigned trace_length = 68;
+    std::array<uint8_t, 16> velocity {}, pressure {}, peak {}; // Latest strike, pressure now, highest this touch.
+    std::array<uint8_t, trace_length> trace {};   // Highest pressure on any pad during each frame.
+    std::array<uint8_t, trace_length> strikes {}; // Velocity of a strike during each frame, 0 for none.
+};
+
 struct ScreenState {
     uint32_t held = 0;
     int last_pad = -1, velocity = 0;
@@ -30,6 +39,7 @@ struct ScreenState {
     Page page = Page::Synth;
     RecorderView recorder;
     unsigned light_position = 0; // Milliseconds into the light show loop.
+    PadsView pads;
 };
 class Screen {
 public:
@@ -38,6 +48,7 @@ public:
 private:
     void draw_recorder(juce::Graphics& g, const ScreenState& state);
     void draw_lights(juce::Graphics& g, const ScreenState& state);
+    void draw_pads(juce::Graphics& g, const ScreenState& state);
     juce::Typeface::Ptr typeface;
     juce::Image image {juce::Image::ARGB, 320, 240, true};
 };

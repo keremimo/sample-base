@@ -5,14 +5,16 @@
 #include <cstdio>
 
 std::string status_line(const AppState& state) {
+    int last = state.last_pad.load();
+    auto touch = last >= 0 ? state.pads.touch(unsigned(last)) : PadTouch {};
     char reply[1536];
     snprintf(reply, sizeof(reply), "OK frames=%llu sounding_blocks=%llu hardware_events=%u external_events=%u synthetic_events=%u "
-             "held=%04x last_pad=%d velocity=%d last_midi=%06x peak=%.6f input_peak=%.6f capture_frames=%llu capture_active=%u "
+             "held=%04x last_pad=%d velocity=%d pressure=%u peak_pressure=%u last_midi=%06x peak=%.6f input_peak=%.6f capture_frames=%llu capture_active=%u "
              "xruns=%u capture_xruns=%u queue_overruns=%u clocks=%u gain=%.2f monitor=%.2f push_exit=%u "
              "source=%s channels=%s recorder=%s recorded_frames=%u play_frame=%u takes=%u usb=%s page=%s light_scene=%u",
              static_cast<unsigned long long>(state.audio.frames.load()), static_cast<unsigned long long>(state.audio.sounding_blocks.load()),
-             state.hardware_events.load(), state.external_events.load(), state.synthetic_events.load(), state.held.load(), state.last_pad.load() + 1,
-             state.velocity.load(), state.last_midi.load(), double(state.audio.peak.load()), double(state.audio.input_peak.load()),
+             state.hardware_events.load(), state.external_events.load(), state.synthetic_events.load(), state.held.load(), last + 1,
+             state.velocity.load(), unsigned(touch.pressure), unsigned(touch.peak), state.last_midi.load(), double(state.audio.peak.load()), double(state.audio.input_peak.load()),
              static_cast<unsigned long long>(state.audio.capture_frames.load()), unsigned(state.audio.capture_active.load()),
              state.audio.xruns.load(), state.audio.capture_xruns.load(), state.overruns.load(), state.clocks.load(), double(state.gain.load()), double(state.monitor.load()), unsigned(state.push_exit.load()),
              input_source_names[state.source.load()], input_channel_names[state.channels.load()],

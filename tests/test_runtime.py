@@ -176,6 +176,11 @@ class RuntimeTests(unittest.TestCase):
                     self.assertTrue(command(bad).startswith("ERR"), bad)
                 self.assertTrue(command("page synth").startswith("OK"))
                 status_until("page=synth light_scene=0")
+                self.assertIn("pressure=0 peak_pressure=0", command("status"))
+                self.assertEqual(command("page pads"), "OK page pads")
+                status_until("page=pads")
+                self.assertTrue(command("page synth").startswith("OK"))
+                status_until("page=synth")
                 stream = subprocess.run([str(ROOT / "build/sample-base"), "--runtime-dir", str(runtime), "--ctl-stream"],
                                         input="status\nunknown\nsurface-log 0\n", capture_output=True, text=True, timeout=15)
                 replies = stream.stdout.splitlines()

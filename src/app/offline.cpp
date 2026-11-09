@@ -36,6 +36,25 @@ RecorderView preview_recorder() {
     return view;
 }
 
+// Three pads held, one pressed hard, after a few seconds of presses.
+PadsView preview_pads() {
+    PadsView view;
+    view.velocity = {{82, 64, 0, 127, 0, 101, 0, 0, 0, 0, 38, 0, 0, 55, 0, 0}};
+    view.pressure[5] = 104; view.pressure[10] = 22; view.pressure[1] = 47;
+    view.peak = view.pressure; view.peak[5] = 118; view.peak[3] = 76;
+    // Three presses: a quick tap, a slow squeeze and the one held now.
+    auto press = [&](unsigned from, unsigned length, float height, uint8_t velocity) {
+        view.strikes[from] = velocity;
+        for (unsigned n = 0; n < length && from + n < PadsView::trace_length; ++n)
+            view.trace[from + n] = uint8_t(std::lround(height * 127 * std::sin(3.14159265 * (n + 1) / (length + 1))));
+    };
+    press(6, 5, 0.35f, 127); press(20, 22, 0.93f, 76);
+    view.strikes[48] = 101;
+    for (unsigned n = 49; n < PadsView::trace_length; ++n)
+        view.trace[n] = uint8_t(std::lround(104 * std::min(1.0, (n - 49) / 9.0)));
+    return view;
+}
+
 int write_preview(const ScreenState& state, const std::string& png_path) {
     Screen screen(default_font_path());
     save_png(screen.draw(state), png_path);
@@ -88,6 +107,13 @@ int write_recorder_preview(const std::string& png_path) {
 int write_lights_preview(const std::string& png_path, unsigned position_ms) {
     ScreenState state; state.page = Page::Lights; state.light_position = position_ms;
     state.last_input = surface_buttons[size_t(SurfaceButton::PadFx)].name;
+    return write_preview(state, png_path);
+}
+
+int write_pads_preview(const std::string& png_path) {
+    ScreenState state; state.page = Page::Pads; state.pads = preview_pads();
+    state.last_pad = 5; state.velocity = 101; state.held = 1u << 5 | 1u << 10 | 1u << 1;
+    state.last_input = surface_buttons[size_t(SurfaceButton::SixteenLevels)].name;
     return write_preview(state, png_path);
 }
 

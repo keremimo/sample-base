@@ -11,11 +11,12 @@
 //   sample-base --preview FILE.png [PROMPT]
 //   sample-base --preview-recorder FILE.png
 //   sample-base --preview-lights FILE.png [MS]
+//   sample-base --preview-pads FILE.png
 //   sample-base --hardware
 // --ctl takes the rest of the line as its command; --ctl-stream ignores
 // anything after it. Options before either still apply.
 struct Options {
-    enum class Mode { Run, SelfTest, Preview, PreviewRecorder, PreviewLights, Hardware, Control, ControlStream };
+    enum class Mode { Run, SelfTest, Preview, PreviewRecorder, PreviewLights, PreviewPads, Hardware, Control, ControlStream };
     Mode mode = Mode::Run;
 
     // Run

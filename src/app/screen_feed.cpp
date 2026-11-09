@@ -55,6 +55,21 @@ ScreenState ScreenFeed::frame(AppState& state) {
     view.light_position = state.light_position.load();
     { std::lock_guard<std::mutex> lock(state.prompt_lock); view.prompt = state.prompt; }
     if (view.page == Page::Recorder) view.recorder = recorder_view(state);
+
+    // The pressure trace moves on every frame, so it is current when the pad page opens.
+    std::rotate(trace.begin(), trace.begin() + 1, trace.end());
+    std::rotate(strike_marks.begin(), strike_marks.begin() + 1, strike_marks.end());
+    unsigned strikes = state.pads.strikes();
+    trace.back() = state.pads.take_recent();
+    strike_marks.back() = strikes != strikes_seen ? uint8_t(view.velocity) : 0;
+    strikes_seen = strikes;
+    if (view.page == Page::Pads) {
+        for (unsigned pad = 0; pad < PadTouches::pads; ++pad) {
+            auto touch = state.pads.touch(pad);
+            view.pads.velocity[pad] = touch.velocity; view.pads.pressure[pad] = touch.pressure; view.pads.peak[pad] = touch.peak;
+        }
+        view.pads.trace = trace; view.pads.strikes = strike_marks;
+    }
     auto now = std::chrono::steady_clock::now();
     if (state.recorder.refused() != refusals_seen) { refusals_seen = state.recorder.refused(); hint_until = now + std::chrono::milliseconds(2500); }
     if (now < hint_until) { view.recorder.detail = "Choose an input first: left button above the screen"; view.recorder.hint = true; }

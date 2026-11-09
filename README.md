@@ -31,6 +31,16 @@ through the scenes, and the right one (or **Pad FX** again) returns to the
 synth and turns the lights off. Pads still play while it runs, glowing white
 under your finger.
 
+**Pad touch.** Press **16 Levels** to see how hard the pads are played. Each
+pad lights up when struck, in a colour and brightness set by its velocity
+(blue when soft, through green and yellow, to red when hard), then follows
+its pressure (aftertouch) while held and fades out after release. The bank
+lights A–H meter the hardest held pad and the fader light takes its colour.
+The screen shows every pad's latest velocity, a pressure fill on held pads,
+the last pad's velocity, pressure and peak pressure, and five seconds of
+pressure with each strike marked. The right button above the screen (or
+**16 Levels** again) returns to the synth. Pressure does not change the sound.
+
 Presets, sequencing, project
 storage, saving takes and a USB audio output bridge are future work. The reusable base also supplies audio input, mixer and
 jack controls, bidirectional MIDI and hotplug, pad/button/bank lights,
@@ -50,7 +60,8 @@ cd sample-base
 
 This builds Linux ARM64 binaries in a Debian container, runs the tests,
 renders a note and its release into `build/test.wav`, and creates
-`build/preview.png`, `build/preview-recorder.png` and `build/preview-lights.png`. The complete app is
+`build/preview.png`, `build/preview-recorder.png`, `build/preview-lights.png`
+and `build/preview-pads.png`. The complete app is
 `build/sample-base`; no sound module, factory-preset bank or sibling checkout
 is needed.
 
@@ -67,6 +78,7 @@ build/sample-base --self-test build/test.wav
 build/sample-base --preview build/preview.png
 build/sample-base --preview-recorder build/preview-recorder.png
 build/sample-base --preview-lights build/preview-lights.png [MS]
+build/sample-base --preview-pads build/preview-pads.png
 ```
 
 No offline mode opens the MPC's audio, display or control surface.
@@ -124,7 +136,8 @@ Base code never includes app code.
 | `src/app/control_socket` | Control socket server and `--ctl` client |
 | `src/app/surface_events` | What pads, buttons and knobs do |
 | `src/app/audio_render` | Audio callback: synth, recorder and mix |
-| `src/app/light_driver` | Light show and recorder transport lights |
+| `src/app/light_driver` | Light show, pad touch and recorder transport lights |
+| `src/app/pad_touch.h` | Each pad's velocity and pressure, and the colours for how hard it is played |
 | `src/app/screen_feed` | Per-frame copy of shared state for the screen |
 | `src/app/screen`, `synth.h`, `light_show.h` | Drawing, the synth and the light show scenes |
 | `src/app/reports` | `status`, `recorder` and surface JSON replies |

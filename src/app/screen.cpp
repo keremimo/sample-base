@@ -3,6 +3,7 @@
 #include "pads.h"
 #include "recorder.h"
 #include "app/light_show.h"
+#include "app/pad_touch.h"
 #include "app/util.h"
 #include <cmath>
 #include <stdexcept>
@@ -24,6 +25,14 @@ juce::String clock_time(unsigned frames, unsigned rate) {
 float meter_position(float peak) {
     if (peak <= 0.0f) return 0.0f;
     return juce::jlimit(0.0f, 1.0f, (20.0f * std::log10(peak) + 48.0f) / 48.0f);
+}
+// A surface light as the screen shows it. LED drive is squared for even
+// fades; the LCD has its own gamma, so the square root shows roughly what
+// the eye sees on the pads. An unlit light is drawn as a dark key.
+juce::Colour shown_light(Rgb colour) {
+    if (!colour.r && !colour.g && !colour.b) return juce::Colour(0xff1f2830);
+    auto channel = [](uint8_t value) { return uint8_t(std::lround(std::sqrt(value / 127.0f) * 255)); };
+    return juce::Colour(channel(colour.r), channel(colour.g), channel(colour.b));
 }
 }
 
@@ -73,6 +82,10 @@ juce::Image Screen::draw(const ScreenState& state) {
         draw_lights(g, state);
         return image;
     }
+    if (state.page == Page::Pads) {
+        draw_pads(g, state);
+        return image;
+    }
     label("sample-base", 12, 7, 220, 27, 25, text);
     g.setColour(juce::Colour(0xff263b34)); g.fillRoundedRectangle(245, 13, 63, 19, 5);
     label("PLAY", 260, 13, 45, 19, 12, mint);
@@ -81,8 +94,9 @@ juce::Image Screen::draw(const ScreenState& state) {
     label(state.last_pad >= 0 ? "Pad " + juce::String(state.last_pad + 1) + "  /  " + juce::String(state.velocity) : "Tap a pad to play", 12, 94, 210, 18, 13, muted);
     g.setColour(track); g.fillRoundedRectangle(237, 67, 71, 6, 3);
     g.setColour(mint); g.fillRoundedRectangle(237, 67, juce::jlimit(1.0f, 71.0f, state.peak * 142), 6, 3);
-    label("C major", 237, 83, 80, 18, 12, muted);
-    label("Pad FX: lights", 237, 99, 76, 16, 11, muted);
+    label("C major", 237, 79, 80, 16, 12, muted);
+    label("Pad FX: lights", 237, 93, 76, 14, 11, muted);
+    label("16 Levels: pads", 237, 107, 76, 14, 11, muted);
     for (int pad = 0; pad < 16; ++pad) {
         int x = 12 + (pad % 4) * 77, y = 123 + (3 - pad / 4) * 19;
         bool held = (state.held & (1u << pad)) != 0;
@@ -208,18 +222,11 @@ void Screen::draw_lights(juce::Graphics& g, const ScreenState& state) {
         if (fill > 0) { g.setColour(mint); g.fillRoundedRectangle(x, 170, std::max(13 * fill, 3.0f), 5, 2.5f); }
     }
 
-    // Mirror of the surface: fader light, pads (pad 1 bottom left) and bank
-    // lights A-H. LED drive is squared for even fades; the LCD has its own
-    // gamma, so the square root shows roughly what the eye sees on the pads.
-    auto shown = [](Rgb colour) {
-        if (!colour.r && !colour.g && !colour.b) return juce::Colour(0xff1f2830);
-        auto channel = [](uint8_t value) { return uint8_t(std::lround(std::sqrt(value / 127.0f) * 255)); };
-        return juce::Colour(channel(colour.r), channel(colour.g), channel(colour.b));
-    };
-    g.setColour(shown(frame.fader)); g.fillRoundedRectangle(184, 56, 5, 108, 2.5f);
+    // Mirror of the surface: fader light, pads (pad 1 bottom left) and bank lights A-H.
+    g.setColour(shown_light(frame.fader)); g.fillRoundedRectangle(184, 56, 5, 108, 2.5f);
     for (unsigned pad = 0; pad < surface_pad_lights; ++pad) {
         float x = 196 + float(pad % 4) * 28, y = 56 + float(3 - pad / 4) * 28;
-        g.setColour(shown(frame.pads[pad])); g.fillRoundedRectangle(x, y, 24, 24, 3);
+        g.setColour(shown_light(frame.pads[pad])); g.fillRoundedRectangle(x, y, 24, 24, 3);
     }
     for (unsigned bank = 0; bank < surface_bank_lights; ++bank) {
         g.setColour(frame.banks[bank] ? text : track);
@@ -228,6 +235,72 @@ void Screen::draw_lights(juce::Graphics& g, const ScreenState& state) {
 
     g.setColour(rule); g.fillRect(12, 205, 296, 1);
     label("Pad FX: synth   Sample: recorder", 12, 210, 190, 20, 12, text);
+    if (!state.last_input.empty())
+        label(juce::String::fromUTF8(state.last_input.c_str()), 196, 210, 112, 20, 12, mint, juce::Justification::centredRight);
+}
+
+void Screen::draw_pads(juce::Graphics& g, const ScreenState& state) {
+    auto label = [&](juce::String value, int x, int y, int w, int h, float size, juce::Colour colour,
+                     juce::Justification justification = juce::Justification::centredLeft) {
+        draw_label(g, typeface, value, x, y, w, h, size, colour, justification);
+    };
+    auto force_shown = [](float force) { return shown_light(pad_touch::force_colour(force)); };
+    const auto& view = state.pads;
+    int last = state.last_pad >= 0 && state.last_pad < 16 ? state.last_pad : -1;
+
+    label("PAD TOUCH", 12, 8, 190, 14, 10, mint);
+    label(last >= 0 ? "Pad " + juce::String(last + 1) : "Hit a pad", 12, 20, 190, 26, 22, text);
+    // Only the right button above the screen is a soft key here.
+    g.setColour(panel); g.fillRoundedRectangle(216, 6, 96, 38, 5);
+    label("PAGE", 226, 8, 82, 14, 10, muted);
+    label("Synth", 226, 22, 82, 20, 17, text);
+
+    // Pads, pad 1 bottom left, with the velocity of their latest strike. A
+    // held pad is tinted by its strike and fills from the bottom with pressure.
+    for (unsigned pad = 0; pad < 16; ++pad) {
+        float x = 12 + float(pad % 4) * 37, y = 56 + float(3 - pad / 4) * 37;
+        bool held = (state.held & (1u << pad)) != 0;
+        float fill = held ? 33 * view.pressure[pad] / 127.0f : 0;
+        g.setColour(juce::Colour(0xff26323d)); g.fillRoundedRectangle(x, y, 33, 33, 3);
+        if (held) {
+            g.setColour(force_shown(pad_touch::held_force(view.velocity[pad], 0, pad_touch::flash_ms)).withAlpha(0.5f));
+            g.fillRoundedRectangle(x, y, 33, 33, 3);
+            if (fill > 0) { g.setColour(force_shown(view.pressure[pad] / 127.0f)); g.fillRoundedRectangle(x, y + 33 - fill, 33, fill, 3); }
+        }
+        // Dark text once the pressure fill reaches the number.
+        if (view.velocity[pad]) label(juce::String(view.velocity[pad]), int(x) + 4, int(y) + 2, 27, 14, 12, fill > 19 ? background : held ? text : muted);
+        else label(juce::String(pad + 1), int(x) + 4, int(y) + 2, 27, 14, 10, track.brighter(0.4f));
+    }
+
+    // The latest pad's strike and pressure; the tick marks the highest pressure of this touch.
+    uint8_t velocity = last >= 0 ? view.velocity[size_t(last)] : 0, pressure = last >= 0 ? view.pressure[size_t(last)] : 0;
+    uint8_t peak = last >= 0 ? view.peak[size_t(last)] : 0;
+    auto meter = [&](const juce::String& name, int y, uint8_t value) {
+        label(name, 172, y, 100, 16, 11, muted);
+        label(juce::String(value), 268, y, 40, 16, 14, text, juce::Justification::centredRight);
+        g.setColour(track); g.fillRoundedRectangle(172, float(y + 18), 136, 6, 3);
+        float width = 136 * value / 127.0f;
+        if (width > 0) { g.setColour(force_shown(value / 127.0f)); g.fillRoundedRectangle(172, float(y + 18), std::max(width, 3.0f), 6, 3); }
+    };
+    meter("Velocity", 54, velocity);
+    meter("Pressure  peak " + juce::String(peak), 84, pressure);
+    if (peak) { g.setColour(text); g.fillRect(172 + 134 * peak / 127.0f, 100.0f, 2.0f, 10.0f); }
+
+    // Pressure over the last five seconds, the hardest pad in each frame;
+    // dots mark strikes at their velocity.
+    label("Pressure, strikes: 5 s", 172, 116, 136, 14, 10, muted);
+    g.setColour(juce::Colour(0xff151c23)); g.fillRoundedRectangle(172, 132, 136, 68, 5);
+    for (unsigned n = 0; n < PadsView::trace_length; ++n) {
+        float x = 172 + n * 2.0f;
+        if (view.trace[n]) {
+            float height = std::max(1.0f, 62 * view.trace[n] / 127.0f);
+            g.setColour(force_shown(view.trace[n] / 127.0f)); g.fillRect(x, 197 - height, 2.0f, height);
+        }
+        if (view.strikes[n]) { g.setColour(text); g.fillEllipse(x - 1, 195 - 62 * view.strikes[n] / 127.0f, 4, 4); }
+    }
+
+    g.setColour(rule); g.fillRect(12, 205, 296, 1);
+    label("16 Levels: synth   Pad FX: lights", 12, 210, 190, 20, 12, text);
     if (!state.last_input.empty())
         label(juce::String::fromUTF8(state.last_input.c_str()), 196, 210, 112, 20, 12, mint, juce::Justification::centredRight);
 }
