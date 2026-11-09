@@ -9,8 +9,8 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Twenty-seven regression tests pass on Linux ARM64. On macOS, eighteen
-  portable tests pass and nine Linux-specific tests are skipped. The build
+- Thirty-two regression tests pass on Linux ARM64. On macOS, twenty-two
+  portable tests pass and ten Linux-specific tests are skipped. The build
   also renders the recorder, light show and pad touch page previews
   `build/preview-recorder.png`, `build/preview-lights.png` and
   `build/preview-pads.png`.
@@ -76,6 +76,18 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   intentionally missing system bus. Tests exercise inventory, audition,
   gain/monitor validation, raw MIDI rejection, surface diagnostics, remote
   stop and socket cleanup. No physical audio/display/MIDI devices are opened.
+  The starter app runs on the same runtime with no demo code: `status`
+  carries only the runtime's fields, `audition` reaches its pad hook and
+  updates the held-pad diagnostics, demo commands are refused and an unknown
+  `--app` fails to start.
+- A layout test keeps the source layers apart: only `main.cpp` sits in
+  `src/`, every include names its folder and exists, and each layer includes
+  only the layers below it. Light fixtures check that the runtime's exit
+  release turns off exactly the lights an app set. Unit generation passes
+  `--app` through and rejects names that could alter the systemd unit.
+- Moving to the layered layout left every screen unchanged: the synth,
+  prompt, recorder, pad touch and three light show previews rendered
+  pixel-identical before and after.
 - Installation/recovery tests mock SSH and file transfers, verify stock
   identity checks and rollback, and execute the recovery script against a
   fake service manager to confirm it suppresses restarts during shutdown.

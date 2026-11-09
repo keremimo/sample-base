@@ -10,9 +10,15 @@ ignored `build/` or `.local/`. Preserve dependency attribution and licences.
 Use four-space indentation, bounded audio/MIDI queues and no allocation or
 file I/O in rendering callbacks. Keep screen work off the audio thread.
 
-Keep `src/main.cpp` to option parsing and mode dispatch. Reusable hardware
-interfaces live in `src/`; app code lives in `src/app/`, one responsibility
-per file (see README "Source layout"). Base code never includes `app/`.
+Keep `src/main.cpp` to picking the app and mode dispatch. `src/` is in
+layers (README "Source layout", docs/APPS.md): `surface/` and `dsp/`
+(portable headers), `drivers/` (one per device), `runtime/` (hosts an
+`App`), then the apps `demos/` and `starter/`. Each include names its
+folder; a layer includes only the layers before it, and apps never include
+each other (`tests/test_layout.py`). One responsibility per file; each demo
+has its own folder with `<demo>.h` (model), `<demo>_demo` (buttons, lights,
+commands, audio) and `<demo>_page.cpp` (screen). Anything every app needs
+belongs in the runtime, not in a demo.
 
 Run `./build.sh` and `python3 -m unittest discover -s tests -v`.
 `python3 device.py start` installs to RAM and switches apps; `stock` returns

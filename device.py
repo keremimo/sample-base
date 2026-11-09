@@ -14,18 +14,25 @@ UNIT_PATH = "/run/systemd/system/sample-base.service"
 ACTIVE = "/run/sample-base"
 
 
-def service_unit(release, seconds=0):
+def valid_app_name(app):
+    return bool(app) and len(app) <= 32 and all(c.isascii() and (c.isalnum() or c in "-_") for c in app)
+
+
+def service_unit(release, seconds=0, app="demos"):
     if not release.startswith("/run/sample-base-release-") or not release.removeprefix("/run/sample-base-release-").isalnum():
         raise ValueError("Invalid RAM release path")
     if not isinstance(seconds, int) or seconds < 0:
         raise ValueError("Invalid session duration")
+    if not valid_app_name(app):
+        raise ValueError("Invalid app name")
+    app_option = "" if app == "demos" else " --app " + app
     return f"""[Unit]
 Description=sample-base standalone JUCE instrument
 
 [Service]
 Type=exec
 ExecStartPre=/bin/systemctl stop ac50.service
-ExecStart={release}/sample-base
+ExecStart={release}/sample-base{app_option}
 ExecStopPost=/bin/sh {release}/restore-stock.sh
 Restart=no
 TimeoutStartSec=30
@@ -74,14 +81,16 @@ class Device:
         self.run(release + "/sample-base --self-test " + release + "/test.wav")
         return release
 
-    def start(self, seconds=0):
+    def start(self, seconds=0, app="demos"):
         if not isinstance(seconds, int) or seconds < 0:
             raise ValueError("Session duration must be zero or positive")
+        if not valid_app_name(app):
+            raise ValueError("App names use letters, digits, - and _")
         release = self.stage()
         try:
             self.run("systemctl stop sample-base.service", check=False)
             self.run("ln -s " + release + " " + ACTIVE + ".next && mv -Tf " + ACTIVE + ".next " + ACTIVE)
-            self.run("cat > " + UNIT_PATH, input=service_unit(release, seconds))
+            self.run("cat > " + UNIT_PATH, input=service_unit(release, seconds, app))
             self.run("systemctl daemon-reload && systemctl start sample-base.service")
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
@@ -136,6 +145,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("start")
     start.add_argument("--seconds", type=int, default=0, help="automatically return to stock after N seconds")
+    start.add_argument("--app", default="demos", help="which app to run: demos (default) or starter")
     commands.add_parser("stock")
     commands.add_parser("status")
     ctl = commands.add_parser("ctl"); ctl.add_argument("action", nargs="+", help="running app command and arguments")
@@ -143,7 +153,7 @@ def main():
     args = parser.parse_args()
     device = Device(args.host, args.port, args.key)
     if args.command == "start":
-        device.start(args.seconds)
+        device.start(args.seconds, args.app)
     elif args.command == "stock":
         device.stock()
     elif args.command == "status":

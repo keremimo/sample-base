@@ -4,6 +4,12 @@ An open-source, standalone JUCE application base for **MPC Sample AC50 firmware 
 It draws its own screen, reads the physical pads and makes simple beeps and
 boops without running or injecting into the stock MPC application.
 
+The base is built for your own app to plug into: implement one interface,
+`App`, and the runtime handles the hardware, threads, remote control and the
+safe return to the stock app. See [docs/APPS.md](docs/APPS.md); the smallest
+working app is in [src/starter/](src/starter/). The bundled proofs of concept
+below live in [src/demos/](src/demos/).
+
 The proof of concept has 16 velocity-sensitive pads mapped to C major from
 C4 to D6, a 16-voice sine/triangle synth, a pad display and an output meter.
 **Push the wheel to return to the stock app.** The main volume knob sets the
@@ -67,7 +73,7 @@ is needed.
 
 The build downloads [JUCE 9.0.5](https://github.com/juce-framework/JUCE/releases/tag/9.0.5),
 pinned to revision `d60b7a78030661574a615b586d9325ba7a7fa7dd`, into ignored
-`build/deps/JUCE`. All synth code is included in [src/app/synth.h](src/app/synth.h).
+`build/deps/JUCE`. All synth code is included in [src/demos/synth/synth.h](src/demos/synth/synth.h).
 
 On ARM64 Debian Linux, install the packages in `tools/Dockerfile`, then run
 `python3 tools/dependencies.py` and `make -j4` for an equivalent native build.
@@ -117,34 +123,42 @@ For a bounded test that automatically returns to stock:
 python3 device.py start --seconds 45
 ```
 
+`--app starter` runs the starter app instead of the demos.
+
 ## Source layout
 
-`src/` holds the reusable MPC interfaces; the beep/boop app built on them
-lives in `src/app/`. Base headers are included by name (`"midi.h"`), app
-headers with their folder (`"app/screen.h"`), so each include shows its layer.
-Base code never includes app code.
+`src/` is in layers. Each include names its folder (`"drivers/audio.h"`),
+and a layer only includes the ones before it in this table;
+`tests/test_layout.py` checks both.
 
-| Path | What it is |
+| Folder | What it is |
 | --- | --- |
-| `src/main.cpp` | Entry point: parses options and runs one mode |
-| `src/*.h`, `src/*.cpp` | Hardware and surface interfaces: audio, display, MIDI, mixer, LEDs, pads and controls, power, storage, sync, USB audio, recorder |
-| `src/app/options` | Command line |
-| `src/app/application` | Starts the threads and draws the screen until exit |
-| `src/app/app_state.h` | Everything the audio, MIDI, service and screen threads share |
-| `src/app/controller` | Owns the hardware; runs the service and MIDI threads |
-| `src/app/commands.cpp` | The `--ctl` control commands |
-| `src/app/control_socket` | Control socket server and `--ctl` client |
-| `src/app/surface_events` | What pads, buttons and knobs do |
-| `src/app/audio_render` | Audio callback: synth, recorder and mix |
-| `src/app/light_driver` | Light show, pad touch and recorder transport lights |
-| `src/app/pad_touch.h` | Each pad's velocity and pressure, and the colours for how hard it is played |
-| `src/app/screen_feed` | Per-frame copy of shared state for the screen |
-| `src/app/screen`, `synth.h`, `light_show.h` | Drawing, the synth and the light show scenes |
-| `src/app/reports` | `status`, `recorder` and surface JSON replies |
-| `src/app/offline` | `--self-test`, previews and `--hardware` |
+| `src/surface/` | MIDI parsing and the measured control-surface maps: buttons and knobs, pads, lights and LED colours |
+| `src/dsp/` | Realtime-safe audio pieces: PCM decoding, rate conversion, a lock-free frame ring and the input recorder |
+| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, USB-C audio, sync, power key, platform files, storage service |
+| `src/runtime/` | Hosts one app: the `App` interface (`app.h`), threads, control socket and commands, `status`, options, screen helpers |
+| `src/demos/` | The proofs of concept as one app, one folder each (below) |
+| `src/starter/` | The smallest complete app, to copy for your own |
+| `src/main.cpp` | Picks the app (`--app`) and runs one mode |
 
-A new feature normally gets its own file in `src/app/`; `main.cpp` only
-gains a line when it adds a command-line mode.
+Each demo folder has its pure, testable model (`<demo>.h`), its buttons,
+lights, commands and audio (`<demo>_demo`) and its screen
+(`<demo>_page.cpp`):
+
+| `src/demos/` | What it is |
+| --- | --- |
+| `synth/` | Pads play C major on the beep/boop synth; the home page |
+| `recorder/` | **Sample**: record and play an input |
+| `light_show/` | **Pad FX**: the LED showcase |
+| `pad_touch/` | **16 Levels**: pad velocity and pressure |
+| `demo_app` | Routes the runtime's hooks to the demos and switches pages |
+| `demo_state.h` | What the demos share across threads |
+| `ui`, `demo_screen`, `screen_feed` | Shared look, per-frame view and page drawing |
+| `tools` | `--self-test` and the previews |
+
+A new feature gets its own file in the folder it belongs to; `main.cpp`
+only gains a line for a new app. [docs/APPS.md](docs/APPS.md) explains the
+hooks, their threads and how to wire in an app.
 
 ## Implementation
 

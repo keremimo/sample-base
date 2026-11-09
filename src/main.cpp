@@ -9,6 +9,7 @@
 #include "runtime/run_app.h"
 #include "demos/demo_app.h"
 #include "demos/tools.h"
+#include "starter/starter_app.h"
 #include <sys/stat.h>
 #include <exception>
 #include <iostream>
@@ -18,7 +19,8 @@
 namespace {
 std::unique_ptr<App> make_app(const Options& options) {
     if (options.app == "demos") return std::make_unique<DemoApp>(options.usb_input);
-    throw std::runtime_error("Unknown app: " + options.app + "; use demos");
+    if (options.app == "starter") return std::make_unique<StarterApp>();
+    throw std::runtime_error("Unknown app: " + options.app + "; use demos or starter");
 }
 } // namespace
 

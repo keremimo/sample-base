@@ -1,9 +1,11 @@
 # MPC Sample platform base
 
 This is an independent userspace application base for the MPC Sample AC50.
-Applications reuse the interfaces in `src/`; the included beep/boop app in
-`src/app/` is a small example. Drivers, regulators, codec sequencing and
-hardware ownership remain with Linux.
+Applications implement `App` ([src/runtime/app.h](../src/runtime/app.h);
+see [APPS.md](APPS.md)) on top of the drivers in `src/drivers/`; the demos
+in `src/demos/` and the starter in `src/starter/` are examples. Kernel
+drivers, regulators, codec sequencing and hardware ownership remain with
+Linux.
 
 ## Reference and reproducibility
 
@@ -57,12 +59,14 @@ The kernel sources remain under their own upstream licences.
 
 ## Threading and extension points
 
-`AudioDevice::Render` is the audio extension point. It receives exactly 128
+An application plugs in through `App` (see [APPS.md](APPS.md)), whose
+hooks the runtime calls from its audio, MIDI, service and screen threads.
+`App::render()` sits on `AudioDevice::Render`. It receives exactly 128
 stereo input frames and writes exactly 128 stereo output frames. Capture
 failure supplies zeros while playback continues. The callback must remain
 bounded: no allocation, file access, blocking locks or service calls.
 The demo's synth and software gain/monitoring are separate from the hardware
-adapter, so another application can replace the callback.
+adapter, so another application replaces them with its own `render()`.
 
 `HardwareMidi::Receive` is the input extension point. It receives the source
 port identity and a complete `MidiPacket`, including its MIDI channel and
@@ -343,7 +347,7 @@ and `led off`.
 
 ### Light show
 
-`src/app/light_show.h` is a looping LED showcase of ten scenes (48.9 s) built only
+`src/demos/light_show/light_show.h` is a looping LED showcase of ten scenes (48.9 s) built only
 from the measured messages above. `light_frame(ms)` is a pure function of the
 position in the loop: the MIDI thread requests a frame every 25 ms while the
 light page is open, and the screen draws the same frame as its mirror.

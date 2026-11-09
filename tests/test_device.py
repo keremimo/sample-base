@@ -35,6 +35,14 @@ class SwitchingTests(unittest.TestCase):
         self.assertIn(release + "/sample-base --self-test " + release + "/test.wav",
                       [call.args[0] for call in run.call_args_list])
 
+    def test_unit_starts_the_chosen_app(self):
+        self.assertIn("ExecStart=/run/sample-base-release-abc/sample-base\n", service_unit("/run/sample-base-release-abc"))
+        self.assertIn("ExecStart=/run/sample-base-release-abc/sample-base --app starter\n",
+                      service_unit("/run/sample-base-release-abc", app="starter"))
+        for app in ("", "two words", "a;reboot", "a\nExecStart=/bin/sh", "x" * 33, "dé"):
+            with self.assertRaises(ValueError):
+                service_unit("/run/sample-base-release-abc", app=app)
+
     def test_rejects_unsafe_release_and_session_duration(self):
         for path in ("/usr/bin/app", "/run/sample-base-release-../app", "/run/sample-base-release-a b"):
             with self.assertRaises(ValueError):

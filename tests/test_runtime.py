@@ -200,6 +200,52 @@ class RuntimeTests(unittest.TestCase):
                 app.communicate(timeout=5)
 
     @unittest.skipUnless((ROOT / "build/sample-base").is_file(), "build application first")
+    def test_starter_app_runs_on_the_runtime_alone(self):
+        env = {**os.environ, "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent-sample-base-bus"}
+        unknown = subprocess.run([str(ROOT / "build/sample-base"), "--app", "nope", "--headless", "--no-surface"],
+                                 capture_output=True, text=True, timeout=10, env=env)
+        self.assertEqual(unknown.returncode, 1)
+        self.assertIn("Unknown app: nope", unknown.stderr)
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = Path(temp) / "runtime"
+            app = subprocess.Popen([str(ROOT / "build/sample-base"), "--app", "starter", "--headless", "--no-surface",
+                                    "--audio-output", "null", "--audio-input", "off", "--runtime-dir", str(runtime), "--seconds", "10"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            try:
+                for _ in range(200):
+                    if (runtime / "control.sock").exists() or app.poll() is not None:
+                        break
+                    time.sleep(0.01)
+                self.assertIsNone(app.poll(), "starter app failed to start")
+                client.bind(str(runtime / "test.sock")); client.settimeout(4)
+                def command(text):
+                    client.sendto(text.encode(), str(runtime / "control.sock"))
+                    return client.recv(32768).decode()
+                status = command("status")
+                # The runtime's fields only: the starter adds none.
+                self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1"), status)
+                self.assertNotIn("page=", status)
+                self.assertEqual(command("audition"), "OK audition pad 1")
+                for _ in range(300):
+                    if "synthetic_events=2" in command("status"):
+                        break
+                    time.sleep(0.01)
+                status = command("status")
+                self.assertIn("synthetic_events=2 held=0000 last_pad=1 velocity=100", status)
+                self.assertTrue(command("page pads").startswith("ERR use status"))
+                self.assertNotIn("app:", command("page pads"))
+                self.assertTrue(command("stock").startswith("OK"))
+                stdout, stderr = app.communicate(timeout=5)
+                self.assertEqual(app.returncode, 0, stderr)
+                self.assertIn("READY sample-base", stdout)
+            finally:
+                client.close()
+                if app.poll() is None:
+                    app.kill()
+                app.communicate(timeout=5)
+
+    @unittest.skipUnless((ROOT / "build/sample-base").is_file(), "build application first")
     def test_inventory_without_opening_pcm_or_surface(self):
         result = subprocess.run([str(ROOT / "build/sample-base"), "--hardware"], capture_output=True, text=True, timeout=5,
                                 env={**os.environ, "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent-sample-base-bus"})
