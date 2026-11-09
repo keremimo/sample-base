@@ -12,5 +12,6 @@ DemoView ScreenFeed::frame(DemoState& state, const Session& session) {
     view.recorder = recorder.frame(state, session.audio.capture_active.load(), view.page == Page::Recorder);
     pad_trace.advance(state.pads, view.velocity);
     if (view.page == Page::Pads) view.pads = pad_trace.view(state.pads);
+    view.seq = seq.frame(state, view.page == Page::Seq);
     return view;
 }

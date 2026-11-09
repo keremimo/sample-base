@@ -13,13 +13,14 @@ namespace {
 constexpr double full_scale = 2147483648.0; // S32 sample to -1..1.
 } // namespace
 
-// Audio thread: the synth, the recorder's take playback and input monitoring,
-// mixed at the main volume.
+// Audio thread: the synth, the recorder's take playback, the drums and
+// input monitoring, mixed at the main volume.
 void DemoApp::render(const AudioBlock& input, AudioBlock& output) {
     play_queued_midi(state, synth);
     synth.render(output.data());
     std::array<float, block_frames * 2> playback {};
     recorder_audio.process(state, input, playback);
+    drums.render(state.seq, playback.data(), block_frames);
 
     float gain = state.gain.load(), monitor = state.monitor.load();
     for (unsigned i = 0; i < output.size(); ++i) {
@@ -30,21 +31,26 @@ void DemoApp::render(const AudioBlock& input, AudioBlock& output) {
 
 // MIDI thread. Main volume sets the output gain; buttons switch pages and
 // drive the page's demo, except while a remote prompt owns the screen; pads
-// play the synth and feed the pad touch page.
+// play the synth and feed the pad touch page. On the SEQ page the pads play
+// the sequencer instead; their releases still reach the synth, so a note
+// held across a page change ends.
 void DemoApp::surface(const SurfaceEvent& event) {
     const auto& input = event.input;
+    bool prompting = session().prompting.load();
     if (is_control(input, SurfaceControl::MainVolume)) state.gain.store(main_volume_gain(input.value));
-    if (input.kind == SurfaceInput::Kind::Button && input.pressed && !session().prompting.load())
+    bool sequenced = !prompting && seq_input.surface(state, event);
+    if (input.kind == SurfaceInput::Kind::Button && input.pressed && !prompting)
         press_button(SurfaceButton(input.index));
     if (event.pad >= 0) {
         record_pad_touch(state.pads, event);
-        queue_pad_note(state, event);
+        if (!sequenced) queue_pad_note(state, event);
     }
 }
 
-// Sample, Pad FX and 16 Levels toggle their page; the right button above the
-// screen goes home to the synth, or from there to the recorder. The others
+// Sample, Pad FX, 16 Levels and SEQ toggle their page; the right button above
+// the screen goes home to the synth, or from there to the recorder. The others
 // belong to the page's demo, and the recorder's transport works anywhere.
+// Seq Record opens the sequencer armed, and Stop stops it on every page.
 void DemoApp::press_button(SurfaceButton button) {
     auto page = state.page.load();
     auto toggle = [&](Page wanted) { state.page.store(page == wanted ? Page::Synth : wanted); };
@@ -52,11 +58,15 @@ void DemoApp::press_button(SurfaceButton button) {
     case SurfaceButton::Sample: toggle(Page::Recorder); return;
     case SurfaceButton::PadFx: toggle(Page::Lights); return;
     case SurfaceButton::SixteenLevels: toggle(Page::Pads); return;
+    case SurfaceButton::Seq: toggle(Page::Seq); return;
+    case SurfaceButton::SeqRecord: sequencer_record_button(state); return;
+    case SurfaceButton::Stop: state.seq.stop(); break;
     case SurfaceButton::TopRight: state.page.store(page == Page::Synth ? Page::Recorder : Page::Synth); return;
     default: break;
     }
     if (page == Page::Lights && light_show_button(state, button)) return;
     if (page == Page::Pads && (button == SurfaceButton::TopLeft || button == SurfaceButton::TopMiddle)) return;
+    if (page == Page::Seq && seq_input.button(state, button, Clock::now())) return;
     recorder_button(state, button);
 }
 
@@ -70,15 +80,17 @@ void DemoApp::midi_lost() { state.queue.push({0xb0, 120, 0}); }
 
 // MIDI thread. The page that was left closes before the open one draws, so
 // the old page's last lights never cover the new page's first frame. The
-// recorder's lights show unless the light show is running.
+// recorder's lights show unless the light show or the sequencer is open.
 void DemoApp::lights(SurfaceLights& lights, Clock::time_point now) {
     auto page = state.page.load();
     uint32_t held = session().held.load();
     if (page != Page::Lights && light_show_lights.close(lights, state)) recorder_lights.forget();
     if (page != Page::Pads) pad_lights.close(lights);
+    if (page != Page::Seq && seq_lights.close(lights)) recorder_lights.forget();
     if (page == Page::Lights) light_show_lights.update(lights, state, held, now);
     if (page == Page::Pads) pad_lights.update(lights, state.pads, held, now);
-    if (!light_show_lights.running()) recorder_lights.update(lights, state);
+    if (page == Page::Seq) seq_lights.update(lights, state, now);
+    if (!light_show_lights.running() && !seq_lights.running()) recorder_lights.update(lights, state);
 }
 
 void DemoApp::draw(juce::Graphics& g) {
@@ -96,15 +108,16 @@ std::string DemoApp::command(const std::string& action, const std::string& argum
     }
     if (action == "page") {
         auto name = std::find(page_names.begin(), page_names.end(), argument);
-        if (name == page_names.end()) return "ERR use page synth, recorder, lights or pads";
+        if (name == page_names.end()) return "ERR use page synth, recorder, lights, pads or seq";
         state.page.store(Page(name - page_names.begin())); return "OK page " + argument;
     }
     if (action == "lights") return light_show_command(state, argument);
+    if (action == "seq") return sequencer_command(state, action, argument);
     return recorder_command(state, hardware, usb_device, action, argument);
 }
 
 std::string DemoApp::command_names() const {
-    return "gain, monitor, page, lights, input, source, channels, transport or recorder";
+    return "gain, monitor, page, lights, seq, input, source, channels, transport or recorder";
 }
 
 std::string DemoApp::status() const {
@@ -115,5 +128,6 @@ std::string DemoApp::status() const {
     snprintf(fields, sizeof(fields), "pressure=%u peak_pressure=%u queue_overruns=%u gain=%.2f monitor=%.2f",
              unsigned(touch.pressure), unsigned(touch.peak), state.overruns.load(), double(state.gain.load()), double(state.monitor.load()));
     return std::string(fields) + ' ' + recorder_status(state) + " page=" + page_names[size_t(page)] +
-           " light_scene=" + std::to_string(page == Page::Lights ? light_scene_at(state.light_position.load()) + 1 : 0u);
+           " light_scene=" + std::to_string(page == Page::Lights ? light_scene_at(state.light_position.load()) + 1 : 0u) +
+           ' ' + sequencer_status(state);
 }

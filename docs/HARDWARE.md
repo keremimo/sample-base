@@ -244,6 +244,79 @@ position, capacity, input peaks and USB stream details (state, device, rate,
 channels, bits, ring overflows and underruns). `status` also reports `source`,
 `channels`, `recorder`, `recorded_frames`, `play_frame`, `takes` and `usb`.
 
+## Step sequencer
+
+The demo's SEQ page (`src/demos/sequencer/`) is a one-bar drum machine: eight
+tracks of sixteen 16th-note steps, each track playing one drum made in code.
+A step stores the velocity it was entered with. The pattern is a grid of
+atomic bytes, so the MIDI, service, screen and audio threads share it with
+no lock.
+
+The clock runs inside the audio callback and counts frames, carrying the
+fraction, so steps start on the frame they are due and a bar at 120 BPM is
+exactly 88,200 frames. A tempo change takes effect from the next step.
+Nothing here is a MIDI clock or sync output: the sync jack stays an explicit
+level interface, and the sequencer sends no MIDI.
+
+Each drum is one voice per track: kick and toms are a sine with a falling
+pitch, snare adds high-passed noise, clap is three bursts of band-passed noise
+and a tail, the hats are six detuned square waves through a high-pass filter
+and the bell is two through a band-pass. Envelopes fall by a multiply per
+sample and filter coefficients are set once per hit. A new hit restarts the
+track's voice; a closed hat cuts the open hat short.
+
+A live hit while recording is written onto the nearest step: the playing
+step in its first half, the next one in its second. Written ahead of the
+playhead, it has already sounded, so that step skips it once rather than
+playing it twice a moment later.
+
+| Control | Action |
+| --- | --- |
+| SEQ | Shows or hides the sequencer page |
+| Left button above the screen | Pads: steps or drums |
+| Middle button above the screen, Pad Bank | Next track; with Shift, the previous one |
+| Right button above the screen | Back to the synth page |
+| Pads, step mode | Set the selected track's step at the strike's velocity, or clear it; heard at once while stopped |
+| Pads 1–8, drum mode | Play drums A–H and select that track; written in while recording |
+| Pads 9–16, drum mode | Mute or unmute tracks A–H |
+| Play | Starts from step 1 |
+| Stop | Stops the sequencer and the recorder, on any page |
+| Seq Record | Arms or disarms recording and turns the pads to drums; from another page it opens the sequencer armed |
+| Tap Tempo | Tempo from the last taps' average interval; a pause over two seconds starts again |
+| Wheel, Minus, Plus | Tempo ±1 BPM, or ±0.1 with Shift |
+| Mute | Mutes or unmutes the selected track |
+| Erase | Clears the selected track; with Shift, every track |
+
+In step mode the pads show the selected track's steps in its colour, brighter
+the harder they were struck, and the playhead in white (red while recording).
+In drum mode pads 1–8 rest dim in their track colours and flash as their drum
+sounds, and pads 9–16 show red for a muted track. The bank lights and fader
+light show the selected track. Play is bright while playing, Seq Record dim
+when armed and bright when recording, Mute red for a muted track and Erase
+dim while the track has steps. Stock alternates Tap Tempo's light between
+values 1 and 2 at the tempo; here it is dim between beats, bright for the
+first 16th of each beat and red on the bar's first. Closing the page turns
+these lights off and gives the transport lights back to the recorder. Pads on
+the SEQ page do not play the synth; their releases still reach it, so a note
+held across a page change ends.
+
+The same functions are available remotely:
+
+```sh
+python3 device.py ctl page seq
+python3 device.py ctl seq play
+python3 device.py ctl seq tempo 92.5
+python3 device.py ctl seq step B 5 100
+python3 device.py ctl seq mute H on
+python3 device.py ctl seq
+```
+
+`seq` alone returns JSON with the state, step, tempo, selected track, pad mode,
+whether recording is armed and, per track, its drum, mute, hit count and
+sixteen step velocities. `seq stop`, `seq clear` (every step and mute) and
+`seq reset` (the default groove at 110 BPM) complete the set. `status` also
+reports `seq`, `seq_step` (0 when stopped) and `tempo`.
+
 ## Deliberate hardware boundaries
 
 The public serial driver transports bytes; it does not define the surface

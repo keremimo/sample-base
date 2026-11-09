@@ -6,6 +6,7 @@
 #include "demos/demo_screen.h"
 #include "demos/demo_state.h"
 #include "demos/light_show/light_show.h"
+#include "demos/sequencer/sequencer.h"
 #include "demos/synth/synth.h"
 #include <algorithm>
 #include <array>
@@ -49,6 +50,22 @@ PadsView preview_pads() {
     view.strikes[48] = 101;
     for (unsigned n = 49; n < PadsView::trace_length; ++n)
         view.trace[n] = uint8_t(std::lround(104 * std::min(1.0, (n - 49) / 9.0)));
+    return view;
+}
+
+// The default groove playing step 7 while recording, a snare written in
+// and the bell muted, with the clap selected and just struck.
+SeqView preview_seq() {
+    seq::Pattern pattern;
+    for (unsigned step : {4u, 12u, 15u}) pattern.set(unsigned(seq::Drum::Snare), step, step == 15 ? 48 : 96);
+    for (unsigned step : {3u, 10u}) pattern.set(unsigned(seq::Drum::Bell), step, 90);
+    pattern.set(unsigned(seq::Drum::LowTom), 14, 70); pattern.set(unsigned(seq::Drum::HighTom), 13, 80);
+    SeqView view;
+    for (unsigned track = 0; track < seq::tracks; ++track)
+        for (unsigned step = 0; step < seq::steps; ++step) view.steps[track][step] = pattern.get(track, step);
+    view.muted = 1u << unsigned(seq::Drum::Bell);
+    view.hits = 1u << unsigned(seq::Drum::Clap) | 1u << unsigned(seq::Drum::ClosedHat);
+    view.tempo = 1235; view.step = 6; view.track = uint8_t(seq::Drum::Clap); view.drums = true; view.armed = true;
     return view;
 }
 
@@ -112,6 +129,12 @@ int write_lights_preview(const std::string& png_path, unsigned position_ms) {
     return write_preview(view, png_path);
 }
 
+int write_seq_preview(const std::string& png_path) {
+    DemoView view; view.page = Page::Seq; view.seq = preview_seq();
+    view.last_input = surface_buttons[size_t(SurfaceButton::SeqRecord)].name;
+    return write_preview(view, png_path);
+}
+
 int write_pads_preview(const std::string& png_path) {
     DemoView view; view.page = Page::Pads; view.pads = preview_pads();
     view.last_pad = 5; view.velocity = 101; view.held = 1u << 5 | 1u << 10 | 1u << 1;
@@ -129,6 +152,7 @@ std::optional<int> run_demo_tool(int argc, char** argv) {
     if (tool("--preview", 2, 3)) return write_synth_preview(argv[2], argc == 4 ? argv[3] : "");
     if (tool("--preview-recorder", 2, 2)) return write_recorder_preview(argv[2]);
     if (tool("--preview-pads", 2, 2)) return write_pads_preview(argv[2]);
+    if (tool("--preview-seq", 2, 2)) return write_seq_preview(argv[2]);
     if (tool("--preview-lights", 2, 3)) {
         // By default, mid-way through the rainbow.
         unsigned position = light_scene_start(3) + 1800;

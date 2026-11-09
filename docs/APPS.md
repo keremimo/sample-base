@@ -96,12 +96,13 @@ power, temperatures), storage service and sync jacks. Anything else in
 
 ## Examples
 
-`src/demos/` holds the four proofs of concept as one `DemoApp`, one folder
+`src/demos/` holds the five proofs of concept as one `DemoApp`, one folder
 each:
 - `synth/`: pads play C major, and external MIDI plays the same synth.
 - `recorder/`: record and play the line inputs, the microphone or USB-C audio.
 - `light_show/`: every surface light.
 - `pad_touch/`: pad velocity and pressure.
+- `sequencer/`: a one-bar step sequencer playing eight drums made in code.
 
 Each folder has the same three parts:
 - `<demo>.h`: the pure model that tests can include;

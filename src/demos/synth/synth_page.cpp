@@ -16,11 +16,12 @@ void draw_synth_page(juce::Graphics& g, const Ui& ui, const DemoView& state) {
     label("Built-in synth", 12, 38, 130, 18, 13, muted);
     label("Beep / Boop", 12, 56, 190, 34, 32, text);
     label(state.last_pad >= 0 ? "Pad " + juce::String(state.last_pad + 1) + "  /  " + juce::String(state.velocity) : "Tap a pad to play", 12, 94, 210, 18, 13, muted);
-    g.setColour(track); g.fillRoundedRectangle(237, 67, 71, 6, 3);
-    g.setColour(mint); g.fillRoundedRectangle(237, 67, juce::jlimit(1.0f, 71.0f, state.peak * 142), 6, 3);
-    label("C major", 237, 79, 80, 16, 12, muted);
-    label("Pad FX: lights", 237, 93, 76, 14, 11, muted);
-    label("16 Levels: pads", 237, 107, 76, 14, 11, muted);
+    g.setColour(track); g.fillRoundedRectangle(237, 63, 71, 6, 3);
+    g.setColour(mint); g.fillRoundedRectangle(237, 63, juce::jlimit(1.0f, 71.0f, state.peak * 142), 6, 3);
+    label("C major", 237, 72, 80, 14, 12, muted);
+    label("Pad FX: lights", 237, 85, 76, 12, 11, muted);
+    label("16 Levels: pads", 237, 97, 76, 12, 11, muted);
+    label("SEQ: drums", 237, 109, 76, 12, 11, muted);
     for (int pad = 0; pad < 16; ++pad) {
         int x = 12 + (pad % 4) * 77, y = 123 + (3 - pad / 4) * 19;
         bool held = (state.held & (1u << pad)) != 0;

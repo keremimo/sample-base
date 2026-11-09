@@ -5,6 +5,7 @@
 #include "surface/midi.h"
 #include "demos/page.h"
 #include "demos/pad_touch/pad_touch.h"
+#include "demos/sequencer/sequencer.h"
 #include "demos/synth/synth.h"
 #include <atomic>
 #include <cstdint>
@@ -32,6 +33,9 @@ struct DemoState {
 
     // Pad velocity and pressure showcase: every pad's latest strike and pressure.
     PadTouches pads;
+
+    // Step sequencer: the pattern, tempo, transport and live drum hits.
+    seq::Shared seq;
 
     std::atomic<Page> page {Page::Synth};
     std::atomic<unsigned> light_position {0}; // Light show position in ms; the MIDI thread writes it.

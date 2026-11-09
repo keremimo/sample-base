@@ -6,6 +6,7 @@
 #include "demos/pad_touch/pad_touch_demo.h"
 #include "demos/recorder/recorder_demo.h"
 #include "demos/screen_feed.h"
+#include "demos/sequencer/sequencer_demo.h"
 #include "demos/synth/synth.h"
 #include "demos/ui.h"
 #include <memory>
@@ -16,6 +17,7 @@
 //   recorder    demos/recorder/    Sample: record and play the inputs
 //   light show  demos/light_show/  Pad FX: every surface light
 //   pad touch   demos/pad_touch/   16 Levels: velocity and pressure
+//   sequencer   demos/sequencer/   SEQ: step sequencer and drum machine
 // DemoApp only routes: each runtime hook goes to the demos that use it, and
 // the page buttons choose which page shows.
 class DemoApp : public App {
@@ -42,10 +44,13 @@ private:
 
     Synth synth;                  // Audio thread.
     RecorderAudio recorder_audio; // Audio thread.
+    seq::Engine drums;            // Audio thread.
 
     LightShowLights light_show_lights; // MIDI thread.
     PadTouchLights pad_lights;         // MIDI thread.
     RecorderLights recorder_lights;    // MIDI thread.
+    SequencerInput seq_input;          // MIDI thread.
+    SequencerLights seq_lights;        // MIDI thread.
 
     std::unique_ptr<Ui> ui; // Screen thread; loads its font on the first frame.
     ScreenFeed feed;        // Screen thread.

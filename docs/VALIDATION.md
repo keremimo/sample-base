@@ -9,11 +9,11 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Thirty-two regression tests pass on Linux ARM64. On macOS, twenty-two
+- Thirty-three regression tests pass on Linux ARM64. On macOS, twenty-three
   portable tests pass and ten Linux-specific tests are skipped. The build
-  also renders the recorder, light show and pad touch page previews
-  `build/preview-recorder.png`, `build/preview-lights.png` and
-  `build/preview-pads.png`.
+  also renders the recorder, light show, pad touch and sequencer page previews
+  `build/preview-recorder.png`, `build/preview-lights.png`,
+  `build/preview-pads.png` and `build/preview-seq.png`.
 - Recorder fixtures cover L + R / L / R selection, mono microphone mixing,
   S16_LE, S24_3LE and S32_LE conversion, 44.1/48/32 kHz linear rate
   conversion, ring priming, underrun re-priming, overflow and flush, takes
@@ -42,6 +42,19 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   within 0–127 from blue to full red, release fades and the bank meter.
   The headless app test opens `page pads` and reads `pressure` and
   `peak_pressure` from `status`.
+- Sequencer fixtures check the default groove, step toggling and clamping,
+  mutes and clearing; tap tempo averaging, its two-second reset and clamping
+  to 40–240 BPM; the clock at 120 BPM putting step 5 on frame 22050, a full
+  bar playing each step once, a tempo change from the next step, Play while
+  playing, Stop with voices ringing out and Play from step 1; live hits
+  rounding to the nearest step and a hit written ahead sounding once, not
+  twice; every drum sounding within range, panned to its side, quieter when
+  softer, silent within three seconds and at velocity 0; the closed hat
+  cutting the open hat; the groove at full volume staying below 0.9; and
+  eight distinct track colours. The headless app test drives `page seq`,
+  `seq tempo`, `seq step`, `seq mute`, `seq play`, `seq stop`, `seq reset`
+  and their errors, and waits for the audio thread to play the kick and a
+  snare written in, still playing on another page.
 - Control-map fixtures cover every measured button and control number,
   channel separation from pads, release by note-off or velocity zero, signed
   wheel steps, main-volume gain and the lossless surface log. A fake control
@@ -141,7 +154,12 @@ The input recorder has not yet run on the MPC. Line, microphone and USB-C
 levels, the L/R jack assignment, whether 1.3.0.12's USB gadget configuration
 exposes the UAC2 function while sample-base runs, the host's chosen format and
 long-session clock drift all need hardware confirmation. Saving takes,
-project storage, presets and sequencing remain application work.
+project storage, presets and sequences longer than one bar remain
+application work.
+
+The step sequencer has not yet run on the MPC. The drums' sound and balance
+against the synth on the speaker and headphones, the pad and button light
+timing, and Tap Tempo's feel need hardware confirmation.
 The installer remains RAM-only; reboot removes the session setup and uses
 the existing startup configuration. Hardware mixer/backlight restoration is
 best effort on normal exit; crash recovery restores the stock service.

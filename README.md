@@ -47,7 +47,23 @@ the last pad's velocity, pressure and peak pressure, and five seconds of
 pressure with each strike marked. The right button above the screen (or
 **16 Levels** again) returns to the synth. Pressure does not change the sound.
 
-Presets, sequencing, project
+**Step sequencer.** Press **SEQ** for a drum machine: eight drums made in
+code (kick, snare, clap, closed and open hat, low and high tom, bell), one
+track each, sixteen 16th-note steps. It starts with a house groove. In step
+mode the pads are the selected track's steps: tap one to set it at the
+strike's velocity, tap it again to clear it. The left button above the screen
+switches to drum mode, where pads 1–8 play the drums and pads 9–16 mute them.
+**Pad Bank** or the middle button above the screen picks the track (backwards
+with **Shift**), shown on the bank lights A–H. **Play** starts the bar and
+**Stop** stops it from any page; it keeps playing while other pages are open.
+**Seq Record** arms recording: in drum mode, hits are written onto the
+nearest step while it plays. **Tap Tempo**, the wheel, **−** and **+** set the
+tempo from 40 to 240 BPM (0.1 BPM steps with **Shift**), and Tap Tempo
+flashes on the beat. **Mute** mutes the selected track and **Erase** clears it
+(**Shift + Erase** clears every track). The screen shows all eight tracks,
+the playhead, the tempo and the step playing.
+
+Presets, sequences longer than one bar, saved patterns, project
 storage, saving takes and a USB audio output bridge are future work. The reusable base also supplies audio input, mixer and
 jack controls, bidirectional MIDI and hotplug, pad/button/bank lights,
 display/backlight, sync GPIO,
@@ -66,8 +82,8 @@ cd sample-base
 
 This builds Linux ARM64 binaries in a Debian container, runs the tests,
 renders a note and its release into `build/test.wav`, and creates
-`build/preview.png`, `build/preview-recorder.png`, `build/preview-lights.png`
-and `build/preview-pads.png`. The complete app is
+`build/preview.png`, `build/preview-recorder.png`, `build/preview-lights.png`,
+`build/preview-pads.png` and `build/preview-seq.png`. The complete app is
 `build/sample-base`; no sound module, factory-preset bank or sibling checkout
 is needed.
 
@@ -85,6 +101,7 @@ build/sample-base --preview build/preview.png
 build/sample-base --preview-recorder build/preview-recorder.png
 build/sample-base --preview-lights build/preview-lights.png [MS]
 build/sample-base --preview-pads build/preview-pads.png
+build/sample-base --preview-seq build/preview-seq.png
 ```
 
 No offline mode opens the MPC's audio, display or control surface.
@@ -151,6 +168,7 @@ lights, commands and audio (`<demo>_demo`) and its screen
 | `recorder/` | **Sample**: record and play an input |
 | `light_show/` | **Pad FX**: the LED showcase |
 | `pad_touch/` | **16 Levels**: pad velocity and pressure |
+| `sequencer/` | **SEQ**: step sequencer and drum machine |
 | `demo_app` | Routes the runtime's hooks to the demos and switches pages |
 | `demo_state.h` | What the demos share across threads |
 | `ui`, `demo_screen`, `screen_feed` | Shared look, per-frame view and page drawing |

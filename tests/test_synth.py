@@ -15,3 +15,10 @@ class SynthTests(unittest.TestCase):
             subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
                             "-I" + str(ROOT / "src"), str(ROOT / "tests/synth.cpp"), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
+
+    def test_sequencer_clock_drums_recording_and_tap_tempo(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "sequencer"
+            subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-I" + str(ROOT / "src"), str(ROOT / "tests/sequencer.cpp"), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=20)

@@ -181,6 +181,46 @@ class RuntimeTests(unittest.TestCase):
                 status_until("page=pads")
                 self.assertTrue(command("page synth").startswith("OK"))
                 status_until("page=synth")
+
+                self.assertIn("seq=stopped seq_step=0 tempo=110.0", command("status"))
+                self.assertEqual(command("page seq"), "OK page seq")
+                status_until("page=seq")
+                self.assertEqual(command("seq tempo 92.5"), "OK seq tempo 92.5")
+                self.assertEqual(command("seq step b 5 100"), "OK seq step B 5 100")
+                self.assertEqual(command("seq mute H on"), "OK seq mute H on")
+                for bad in ("seq tempo 39", "seq tempo 241", "seq tempo 92.55", "seq tempo -90", "seq step I 1 1",
+                            "seq step A 0 1", "seq step A 17 1", "seq step A 1 128", "seq mute A maybe",
+                            "seq rewind", "seq play now", "seq step A 1 1 1"):
+                    self.assertTrue(command(bad).startswith("ERR"), bad)
+                pattern = json.loads(command("seq")[3:])
+                self.assertEqual((pattern["state"], pattern["step"], pattern["tempo"], pattern["track"], pattern["pads"], pattern["armed"]),
+                                 ("stopped", 0, 92.5, "A", "steps", False))
+                self.assertEqual([track["drum"] for track in pattern["tracks"]],
+                                 ["Kick", "Snare", "Clap", "Closed hat", "Open hat", "Low tom", "High tom", "Bell"])
+                self.assertEqual(pattern["tracks"][0]["steps"], [112, 0, 0, 0] * 4)
+                self.assertEqual(pattern["tracks"][1]["steps"][4], 100)
+                self.assertTrue(pattern["tracks"][7]["muted"])
+                self.assertTrue(command("seq play").startswith("OK"))
+                status_until("seq=playing")
+
+                def sequencer(until):
+                    for _ in range(300):
+                        state = json.loads(command("seq")[3:])
+                        if until(state):
+                            return state
+                        time.sleep(0.01)
+                    self.fail("sequencer never reached the expected state: " + json.dumps(state))
+                # The audio thread plays the bar against the null PCM, and it
+                # keeps playing on another page.
+                sequencer(lambda state: state["tracks"][1]["hits"] > 0 and state["tracks"][0]["hits"] > 1)
+                self.assertTrue(command("page synth").startswith("OK"))
+                status_until("page=synth")
+                self.assertIn("seq=playing", command("status"))
+                self.assertTrue(command("seq stop").startswith("OK"))
+                status_until("seq=stopped seq_step=0")
+                self.assertEqual(command("seq reset"), "OK seq reset")
+                reset = json.loads(command("seq")[3:])
+                self.assertEqual((reset["tempo"], reset["tracks"][1]["steps"][4], reset["tracks"][7]["muted"]), (110.0, 0, False))
                 stream = subprocess.run([str(ROOT / "build/sample-base"), "--runtime-dir", str(runtime), "--ctl-stream"],
                                         input="status\nunknown\nsurface-log 0\n", capture_output=True, text=True, timeout=15)
                 replies = stream.stdout.splitlines()
