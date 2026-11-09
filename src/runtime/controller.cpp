@@ -57,7 +57,7 @@ void Controller::poll_platform(Session& session) {
     for (unsigned n = 0; n < jack_count; ++n) session.jacks[n].store(jacks.state(Jack(n))); // -1 once the card is lost.
     app.service(hardware);
     if (power.poll()) session.last_input.store(pack_last_input(InputKind::Power, 0, power.pressed()));
-    if (services.stopping()) session.running.store(false);
+    if (services.stopping() || app.finished()) session.running.store(false);
 }
 
 void Controller::run_midi(Session& session) {
@@ -135,7 +135,9 @@ void Controller::midi_packet(Session& session, const MidiPortInfo& port, const M
 void Controller::surface_event(Session& session, MidiEvent midi_event, bool syncing) {
     SurfaceEvent event {midi_event, surface_input(midi_event), pad_index(midi_event), syncing};
     const auto& input = event.input;
-    if (is_button(input, SurfaceButton::WheelPush) && input.pressed && session.push_exit.load()) { session.running.store(false); return; }
+    if (is_button(input, SurfaceButton::WheelPush) && input.pressed && session.push_exit.load() && !app.claims_wheel_push()) {
+        session.running.store(false); return;
+    }
     // The wheel's reply to the position request is a zero step.
     bool moved = input.kind == SurfaceInput::Kind::Control &&
         (is_control(input, SurfaceControl::Wheel) ? input.delta != 0 : !syncing);

@@ -87,7 +87,9 @@ itself. The system demo (`src/demos/system/`) reads all of these.
 
 - **Back to stock:** wheel Push returns to the stock app, and so do
   `stock`, the `--seconds` deadline, a crash and the recovery service. The
-  app never sees Push.
+  app never sees Push, unless it returns true from `claims_wheel_push()`;
+  it must then offer its own way out (an exit page) and return true from
+  `finished()` once chosen. The other ways back stay as they are.
 - **Remote commands:** `status`, `screenshot`, `audition` (pad 1 pressed for
   300 ms), `prompt`, `led`, `surface`, `surface-log`, `midi`, `midi-send`,
   the mixer, brightness, clock, power, storage and `usb-output` commands

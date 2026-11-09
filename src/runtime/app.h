@@ -96,6 +96,15 @@ public:
     // Any thread: extra `key=value` fields for the `status` line.
     virtual std::string status() const { return {}; }
 
+    // MIDI thread: true when the app uses wheel Push itself. It must then
+    // offer its own way back to the stock app (an exit page) and return true
+    // from finished() when chosen. Remote stop, the deadline, a crash and the
+    // recovery service still return to stock as before.
+    virtual bool claims_wheel_push() const { return false; }
+    // Service thread, every few milliseconds: true once the app wants the
+    // runtime to stop and return to the stock app.
+    virtual bool finished() const { return false; }
+
     // run_app() calls this once, before any hook.
     void attach(const Session& session) { attached = &session; }
 
