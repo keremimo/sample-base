@@ -64,8 +64,8 @@ flashes on the beat. **Mute** mutes the selected track and **Erase** clears it
 the playhead, the tempo and the step playing.
 
 Presets, sequences longer than one bar, saved patterns, project
-storage, saving takes and a USB audio output bridge are future work. The reusable base also supplies audio input, mixer and
-jack controls, bidirectional MIDI and hotplug, pad/button/bank lights,
+storage and saving takes are future work. The reusable base also supplies audio input, mixer and
+jack controls, USB-C audio to a computer (whatever the app plays), bidirectional MIDI and hotplug, pad/button/bank lights,
 display/backlight, sync GPIO,
 power telemetry, storage-service integration and session recovery.
 See [docs/HARDWARE.md](docs/HARDWARE.md) for APIs, commands and reference wiring.
@@ -206,6 +206,12 @@ hooks, their threads and how to wire in an app.
   ([src/drivers/usb_audio.cpp](src/drivers/usb_audio.cpp)) reads the kernel's UAC2 gadget
   capture PCM on its own thread, converts the host's rate to 44.1 kHz and
   crosses into the audio thread through a lock-free ring.
+- **USB-C output** (the same driver) sends whatever the app plays to a
+  computer recording from the MPC: the runtime hands every rendered block to
+  another ring, and a thread converts it to the computer's rate, 48 kHz on
+  1.3.0.12, and writes the gadget's playback PCM. A slow trim of that
+  conversion follows the clock drift between the two, so long recordings
+  stay continuous.
 - Fonts come from the MPC's existing Liberation Sans installation.
 
 The hardware reference is inMusic's

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "drivers/usb_audio.h"
 #include "runtime/app.h"
 #include "runtime/session.h"
 #include "surface/midi.h"
@@ -13,7 +14,7 @@
 
 // `status`: one "OK key=value ..." line, also printed when the app exits:
 // the runtime's fields, then App::status().
-std::string status_line(const Session& session, const App& app);
+std::string status_line(const Session& session, const App& app, const UsbAudioOutput& usb_output);
 // `surface`: the latest value of every surface note, pressure and control.
 std::string surface_json(const SurfaceState& state);
 

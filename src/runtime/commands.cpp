@@ -21,7 +21,7 @@ std::string Controller::command(Session& session, const std::string& text) {
     std::getline(input >> std::ws, argument);
 
     // Session
-    if (action == "status" && argument.empty()) return status_line(session, app);
+    if (action == "status" && argument.empty()) return status_line(session, app, usb_output);
     if (action == "stock" && argument.empty()) { session.running.store(false); return "OK returning to stock app"; }
     if (action == "screenshot" && argument.empty()) { session.screenshot.store(true); return "OK screenshot requested"; }
     // Calibration needs every control, including wheel Push. Remote stop,
@@ -69,6 +69,7 @@ std::string Controller::command(Session& session, const std::string& text) {
     if (action == "clock-out" && (argument == "0" || argument == "1"))
         return clock.output(argument == "1") ? "OK sync output updated" : "ERR sync output unavailable";
     if (action == "power" && argument.empty()) return "OK " + power.json();
+    if (action == "usb-output") return usb_output_command(argument);
     if (action == "storage" && argument.empty()) return "OK {\"generation\":" + std::to_string(services.storage_generation()) + ",\"state\":" + services.storage_json() + '}';
     if (action == "storage-mount" || action == "storage-unmount")
         return services.mount(argument, action == "storage-mount") ? "OK storage request completed" : "ERR storage service request failed";
@@ -78,7 +79,7 @@ std::string Controller::command(Session& session, const std::string& text) {
     if (!reply.empty()) return reply;
     auto names = app.command_names();
     return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, led, midi, midi-send, mixer, mixer-set, "
-           "brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock" +
+           "brightness, storage, storage-mount, storage-unmount, usb-output, audition, screenshot, clock, clock-in, clock-out or stock" +
            (names.empty() ? std::string() : "; app: " + names);
 }
 
@@ -90,6 +91,17 @@ std::string Controller::midi_send_command(const std::string& argument) {
         std::find(catalog.outputs.begin(), catalog.outputs.end(), address) == catalog.outputs.end()) return "ERR invalid message or unavailable port";
     MidiSendRequest request; strcpy(request.address.data(), address.c_str()); request.packet = packet;
     return midi_output.push(request) ? "OK MIDI queued" : "ERR full output queue";
+}
+
+// usb-output [on|off]: what the computer records over USB-C. `on` restarts
+// with the PCM given to --usb-output, or finds the gadget when that was off.
+std::string Controller::usb_output_command(const std::string& argument) {
+    if (argument.empty()) return "OK " + usb_output.json();
+    if (argument == "off") { usb_output.stop(); return "OK usb-output off"; }
+    if (argument != "on") return "ERR use usb-output [on|off]";
+    auto device = usb_output.requested();
+    usb_output.start(device.empty() ? "auto" : device);
+    return "OK usb-output on";
 }
 
 // mixer-set ID VALUE...: writes one ALSA mixer control within its range.

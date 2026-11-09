@@ -42,7 +42,7 @@ both rules.
 | --- | --- | --- |
 | `src/surface/` | MIDI parsing and the measured control-surface maps: buttons and knobs (`controls.h`), pads (`pads.h`), lights (`leds.h`), even-looking LED colours (`led_colours.h`) | `dsp/` |
 | `src/dsp/` | Realtime-safe audio pieces: PCM decoding, rate conversion and a lock-free frame ring (`frame_ring.h`), the input recorder (`recorder.h`) | `surface/` |
-| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, USB-C audio input, sync jacks, power key, platform files, storage service | `surface/`, `dsp/` |
+| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, USB-C audio in and out, sync jacks, power key, platform files, storage service | `surface/`, `dsp/` |
 | `src/runtime/` | Hosts one app: `App`, the threads, the control socket and its commands, `status`, options and screen helpers | `drivers/`, `surface/`, `dsp/` |
 | `src/demos/`, `src/starter/`, your app | Apps | all of the above, not each other |
 | `src/main.cpp` | Picks the app with `--app` and runs one mode | everything |
@@ -84,8 +84,12 @@ power, temperatures), storage service and sync jacks. Anything else in
   app never sees Push.
 - **Remote commands:** `status`, `screenshot`, `audition` (pad 1 pressed for
   300 ms), `prompt`, `led`, `surface`, `surface-log`, `midi`, `midi-send`,
-  the mixer, brightness, clock, power and storage commands all work for every
-  app (see [HARDWARE.md](HARDWARE.md)).
+  the mixer, brightness, clock, power, storage and `usb-output` commands
+  all work for every app (see [HARDWARE.md](HARDWARE.md)).
+- **USB-C audio out:** whenever a computer records from the MPC over USB-C,
+  it gets exactly what `render()` wrote, after the app's own volume. The
+  app does nothing for it; `--usb-output off` or `usb-output off` turns it
+  off.
 - **Lights:** the runtime sends only what changed, at most 48 messages per
   pass, and on exit turns off every light the app set.
 - **Remote prompt:** while a tool such as `tools/capture_controls.py` shows

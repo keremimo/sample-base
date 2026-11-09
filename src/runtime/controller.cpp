@@ -13,7 +13,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 } // namespace
 
-Controller::Controller(App& app, bool required) : app(app), surface_required(required) {
+Controller::Controller(App& app, bool required, UsbAudioOutput& usb) : app(app), surface_required(required), usb_output(usb) {
     catalog = {midi.json(), midi.outputs()};
     require(!required || midi.has_surface(), "Control surface unavailable; use --no-surface only for a headless/host test");
 }

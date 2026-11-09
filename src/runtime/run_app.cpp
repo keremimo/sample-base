@@ -2,6 +2,7 @@
 #include "runtime/run_app.h"
 #include "drivers/audio.h"
 #include "drivers/display.h"
+#include "drivers/usb_audio.h"
 #include "runtime/control_socket.h"
 #include "runtime/controller.h"
 #include "runtime/reports.h"
@@ -18,8 +19,14 @@ namespace {
 volatile std::sig_atomic_t interrupted = 0;
 void signal_handler(int) { interrupted = 1; }
 
-// AudioDevice's callback, handing each block to the app.
-void render(void* app, const AudioBlock& input, AudioBlock& output) { static_cast<App*>(app)->render(input, output); }
+// AudioDevice's callback: the app renders each block, and the computer
+// records what it rendered when it is recording over USB-C.
+struct AudioRoute { App& app; UsbAudioOutput& usb; };
+void render(void* context, const AudioBlock& input, AudioBlock& output) {
+    auto& route = *static_cast<AudioRoute*>(context);
+    route.app.render(input, output);
+    route.usb.push(output.data(), audio_frames);
+}
 } // namespace
 
 int run_app(App& app, const Options& options) {
@@ -27,16 +34,19 @@ int run_app(App& app, const Options& options) {
     std::unique_ptr<Display> display;
     juce::Typeface::Ptr prompt_font;
     if (!options.headless) { prompt_font = load_typeface(); display = std::make_unique<Display>(); }
+    UsbAudioOutput usb_output; // Outlives the audio thread, which feeds it.
     AudioDevice audio(options.audio_output, options.audio_input);
-    Controller controller(app, options.surface_required);
+    Controller controller(app, options.surface_required, usb_output);
     ControlServer server(options.runtime);
     Session session;
     app.attach(session);
+    AudioRoute route {app, usb_output};
+    if (options.usb_output != "off") usb_output.start(options.usb_output);
     auto deadline = options.seconds ? std::chrono::steady_clock::now() + std::chrono::seconds(options.seconds)
                                     : std::chrono::steady_clock::time_point::max();
     std::thread audio_thread, control_thread;
     try {
-        audio_thread = std::thread([&] { audio.run(session.running, session.failed, session.audio, render, &app); });
+        audio_thread = std::thread([&] { audio.run(session.running, session.failed, session.audio, render, &route); });
         control_thread = std::thread([&] { controller.run(session, server); });
         std::cout << "READY sample-base JUCE " << JUCE_MAJOR_VERSION << '.' << JUCE_MINOR_VERSION << '.' << JUCE_BUILDNUMBER << std::endl;
         // This thread draws the screen: the remote prompt while one is shown, otherwise the app.
@@ -62,6 +72,6 @@ int run_app(App& app, const Options& options) {
         throw;
     }
     session.running.store(false); audio_thread.join(); control_thread.join();
-    std::cout << status_line(session, app) << std::endl;
+    std::cout << status_line(session, app, usb_output) << std::endl;
     return session.failed.load() ? 1 : 0;
 }

@@ -6,9 +6,10 @@
 #include <atomic>
 #include <cstdint>
 
-// Moving audio between clock domains: PCM decoding, rate conversion and a
-// lock-free ring from one producer thread to the audio thread. Portable and
-// allocation-free; drivers/usb_audio uses all three.
+// Moving audio between clock domains: PCM encoding and decoding, rate
+// conversion, drift correction and a lock-free ring from one producer thread
+// to one consumer thread. Portable and allocation-free; drivers/usb_audio
+// uses all of them, in both directions.
 
 // Signed little-endian PCM sample of 2, 3 or 4 bytes as -1..1.
 inline float pcm_sample(const uint8_t* bytes, unsigned width) {
@@ -21,14 +22,26 @@ inline float pcm_sample(const uint8_t* bytes, unsigned width) {
     return float(double(int32_t(value)) / 2147483648.0);
 }
 
+// The reverse of pcm_sample(): -1..1 as a signed little-endian sample of 2, 3
+// or 4 bytes, rounded to the nearest step. Anything louder clips.
+inline void pcm_store(float sample, uint8_t* bytes, unsigned width) {
+    double scale = double(1u << (8 * width - 1));
+    double value = std::clamp(double(sample) * scale + (sample < 0 ? -0.5 : 0.5), -scale, scale - 1);
+    uint32_t bits = uint32_t(int32_t(value));
+    for (unsigned n = 0; n < width; ++n) bytes[n] = uint8_t(bits >> (8 * n));
+}
+
 // Linear-interpolating rate converter for stereo frames. A computer chooses
 // the USB rate; the AK4558 runs at 44.1 kHz. Output lags input by one frame.
 class LinearResampler {
 public:
     void reset(unsigned input_rate, unsigned output_rate) {
-        step = input_rate && output_rate ? double(input_rate) / output_rate : 1.0;
+        base = step = input_rate && output_rate ? double(input_rate) / output_rate : 1.0;
         phase = 0; primed = false;
     }
+    // Scales the conversion by `factor` from the next frame on, without a
+    // jump: above 1 it reads input slightly faster. See drift_trim().
+    void trim(double factor) { step = base * factor; }
     template <class Emit> void feed(float left, float right, Emit&& emit) {
         if (!primed) { last_left = left; last_right = right; primed = true; return; }
         while (phase < 1.0) {
@@ -40,15 +53,28 @@ public:
         last_left = left; last_right = right;
     }
 private:
-    double step = 1.0, phase = 0;
+    double base = 1.0, step = 1.0, phase = 0;
     float last_left = 0, last_right = 0;
     bool primed = false;
 };
 
-// Stereo float frames from one producer thread to the audio thread. The
-// consumer waits until `prime` frames are buffered before it starts, and again
-// after it runs dry, so a clock-domain hand-off such as USB costs one short
-// silence rather than a stream of clicks. A full ring drops the newest frames.
+// Two crystals never agree exactly: the AK4558's 44.1 kHz and a computer's USB
+// clock drift apart by tens of parts per million. When a FrameRing joins them,
+// this turns the ring's average fill into a LinearResampler::trim() factor for
+// its consumer: a ring filling above `target` is read faster, one draining
+// below it slower. Proportional only, so a steady drift settles with the fill
+// offset by drift / gain, 50 frames for 100 ppm, with a time constant of about
+// 11 seconds at 44.1 kHz. The factor stays within ±0.2 %.
+inline double drift_trim(double average_fill, double target) {
+    constexpr double gain = 2e-6, limit = 2e-3;
+    return 1.0 + std::clamp((average_fill - target) * gain, -limit, limit);
+}
+
+// Stereo float frames from one producer thread to one consumer thread, either
+// way round the audio thread. The consumer waits until `prime` frames are
+// buffered before it starts, and again after it runs dry, so a clock-domain
+// hand-off such as USB costs one short silence rather than a stream of clicks.
+// A full ring drops the newest frames.
 template <unsigned Capacity> class FrameRing {
     static_assert(Capacity >= 2 && (Capacity & (Capacity - 1)) == 0, "Capacity must be a power of two");
 public:

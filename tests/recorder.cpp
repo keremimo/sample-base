@@ -39,6 +39,23 @@ static void sample_formats() {
     assert(pcm_sample(s24, 3) == -1.0f && near(pcm_sample(s24 + 3, 3), -1 / 8388608.0f) && pcm_sample(s24 + 6, 3) == 0.5f);
     const uint8_t s32[] {0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0xc0};
     assert(pcm_sample(s32, 4) == -1.0f && pcm_sample(s32 + 4, 4) == -0.5f);
+
+    // Encoding is the reverse, rounded to the nearest step and clipped.
+    for (unsigned width : {2u, 3u, 4u}) {
+        uint8_t bytes[4] {};
+        float step = 1.0f / float(1u << (8 * width - 1));
+        for (float sample : {0.0f, 0.5f, -0.5f, -1.0f, 0.123456f, -0.987654f}) {
+            pcm_store(sample, bytes, width);
+            assert(std::abs(pcm_sample(bytes, width) - sample) <= step);
+        }
+        pcm_store(-1.0f, bytes, width); assert(pcm_sample(bytes, width) == -1.0f);
+        pcm_store(-3.0f, bytes, width); assert(pcm_sample(bytes, width) == -1.0f);
+        pcm_store(2.0f, bytes, width); assert(near(pcm_sample(bytes, width), 1.0f - step) && bytes[width - 1] == 0x7f);
+    }
+    uint8_t s16_half[2]; pcm_store(0.5f, s16_half, 2); assert(s16_half[0] == 0x00 && s16_half[1] == 0x40);
+    uint8_t s24_low[3]; pcm_store(-1 / 8388608.0f, s24_low, 3); assert(s24_low[0] == 0xff && s24_low[1] == 0xff && s24_low[2] == 0xff);
+    uint8_t s32_quarter[4]; pcm_store(-0.25f, s32_quarter, 4);
+    assert(s32_quarter[0] == 0 && s32_quarter[1] == 0 && s32_quarter[2] == 0 && s32_quarter[3] == 0xe0);
 }
 
 static void resampling() {
@@ -59,6 +76,44 @@ static void resampling() {
     unsigned count = 0;
     for (int n = 0; n < 32000; ++n) up.feed(0.5f, 0.5f, [&](float l, float r) { assert(l == 0.5f && r == 0.5f); ++count; });
     assert(count >= 44098 && count <= 44101);
+
+    // USB output runs the other way, and trim() nudges it without a jump.
+    LinearResampler to_usb; to_usb.reset(44100, 48000);
+    count = 0;
+    for (int n = 0; n < 44100; ++n) to_usb.feed(0.25f, -0.25f, [&](float l, float r) { assert(l == 0.25f && r == -0.25f); ++count; });
+    assert(count >= 47998 && count <= 48001);
+    LinearResampler trimmed; trimmed.reset(44100, 48000); trimmed.trim(1.001); // Reads input 0.1 % faster.
+    count = 0;
+    for (int n = 0; n < 44100; ++n) trimmed.feed(0, 0, [&](float, float) { ++count; });
+    assert(count >= 47950 && count <= 47954); // 48000 / 1.001
+    LinearResampler ramp; ramp.reset(44100, 48000);
+    std::vector<float> values;
+    for (int n = 0; n < 2000; ++n) {
+        if (n == 1000) ramp.trim(0.999);
+        ramp.feed(float(n), 0, [&](float l, float) { values.push_back(l); });
+    }
+    for (size_t n = 1; n < values.size(); ++n) {
+        float advance = values[n] - values[n - 1];
+        assert(advance > 0.9188f * 0.998f && advance < 0.9188f * 1.002f); // 44100 / 48000, within the trim.
+    }
+}
+
+static void drift() {
+    assert(drift_trim(1024, 1024) == 1.0);
+    assert(drift_trim(1074, 1024) > 1.0 && std::abs(drift_trim(1074, 1024) - 1.0001) < 1e-9); // 50 frames: 100 ppm.
+    assert(std::abs(drift_trim(974, 1024) - 0.9999) < 1e-9);
+    assert(std::abs(drift_trim(8192, 1024) - 1.002) < 1e-12 && std::abs(drift_trim(0, 1024) - 0.998) < 1e-12); // ±0.2 % at most.
+
+    // A producer 150 ppm fast into a ring read through a trimmed resampler:
+    // the fill settles 75 frames above target rather than climbing, so the
+    // ring neither overflows nor runs dry.
+    double fill = 1024, factor = 1.0;
+    for (int quarter = 0; quarter < 4 * 120; ++quarter) {
+        double produced = 44100 * 1.00015 / 4, consumed = 44100 * factor / 4;
+        fill += produced - consumed;
+        factor = drift_trim(fill, 1024);
+    }
+    assert(std::abs(fill - 1099) < 2);
 }
 
 static void ring() {
@@ -150,6 +205,7 @@ int main() {
     channel_selection();
     sample_formats();
     resampling();
+    drift();
     ring();
     recorder();
 }

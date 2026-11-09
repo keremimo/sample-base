@@ -1,32 +1,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
 #include "dsp/frame_ring.h"
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
 
-// Audio that a computer plays to the MPC over USB-C. The kernel's UAC2 gadget
+// Audio between the MPC and a computer over USB-C. The kernel's UAC2 gadget
 // function (drivers/usb/gadget/function/f_uac2.c and u_audio.c) registers an
 // ALSA card whose driver is "UAC2_Gadget" with one "UAC2 PCM" device. Its
-// capture stream is the host's playback. The sample size (S16_LE, S24_3LE or
-// S32_LE) and channel count are fixed by the gadget configuration, the rate is
-// whatever the host chose, and the PCM-interface control "Capture Rate" reads 0
-// while the host is not streaming.
+// capture stream is what the computer plays; its playback stream is what the
+// computer records. Each direction's sample size (S16_LE, S24_3LE or S32_LE)
+// and channel count are fixed by the gadget configuration, its rate is
+// whatever the computer chose, and the PCM-interface controls "Capture Rate"
+// and "Playback Rate" read 0 while the computer is not streaming that way.
+// On firmware 1.3.0.12 both directions are stereo S32_LE at 48 kHz only.
 //
-// start() opens nothing on the calling thread: a separate thread finds the
-// gadget, waits for the host, converts the stream to 44.1 kHz stereo float and
-// hands it to the audio thread through a FrameRing. The host and the AK4558
-// have independent clocks, so the ring absorbs drift and re-primes when it
-// runs dry. stop() closes the PCM. Nothing is opened unless an application
-// selects USB input.
-enum class UsbInputState : uint8_t { Stopped, Missing, Waiting, Running, Failed, Count };
-constexpr std::array<const char*, size_t(UsbInputState::Count)> usb_input_state_names {{"stopped", "missing", "waiting", "running", "failed"}};
+// The computer's USB clock and the AK4558's 44.1 kHz drift apart, so each
+// direction runs its own thread with a FrameRing to the audio thread. Neither
+// opens anything until the computer streams, and neither touches the gadget's
+// pitch or feedback controls.
 
+struct Uac2Gadget { std::string pcm, control; };
+// The first UAC2 gadget card, or empty names without one.
+Uac2Gadget find_uac2_gadget();
+// A "Capture Rate" or "Playback Rate" control: the computer's current rate,
+// 0 while it is not streaming, or -1 without the control.
+long uac2_rate(const std::string& control, const char* name);
+
+enum class UsbStreamState : uint8_t { Stopped, Missing, Waiting, Running, Failed, Count };
+constexpr std::array<const char*, size_t(UsbStreamState::Count)> usb_stream_state_names {{"stopped", "missing", "waiting", "running", "failed"}};
+
+// What a computer plays to the MPC. start() opens nothing on the calling
+// thread: a separate thread finds the gadget, waits for the computer,
+// converts its stream to 44.1 kHz stereo float and hands it to the audio
+// thread. The ring re-primes when it runs dry. Nothing is opened unless an
+// application selects USB input.
 class UsbAudioInput {
 public:
     static constexpr unsigned ring_frames = 8192, prime_frames = 1024, output_rate = 44100;
-    struct Device { std::string pcm, control; };
 
     UsbAudioInput() = default;
     ~UsbAudioInput() { stop(); }
@@ -40,23 +54,64 @@ public:
     // Audio thread: `count` stereo frames, silent until enough are buffered.
     bool pull(float* frames, unsigned count) { return ring.pull(frames, count, prime_frames); }
 
-    UsbInputState state() const { return UsbInputState(current.load(std::memory_order_acquire)); }
+    UsbStreamState state() const { return UsbStreamState(current.load(std::memory_order_acquire)); }
     unsigned rate() const { return stream_rate.load(std::memory_order_relaxed); }
     unsigned channels() const { return stream_channels.load(std::memory_order_relaxed); }
     unsigned bits() const { return stream_width.load(std::memory_order_relaxed) * 8; }
     std::string json() const;
-    static Device find_gadget();
-    // The host's current rate, 0 while it is not streaming, or -1 without the control.
-    static long host_rate(const std::string& control);
 
 private:
     void run(std::string device);
-    void set_state(UsbInputState state) { current.store(uint8_t(state), std::memory_order_release); }
+    void set_state(UsbStreamState state) { current.store(uint8_t(state), std::memory_order_release); }
     FrameRing<ring_frames> ring;
     std::thread thread;
     std::atomic<bool> running {false};
-    std::atomic<uint8_t> current {uint8_t(UsbInputState::Stopped)};
+    std::atomic<uint8_t> current {uint8_t(UsbStreamState::Stopped)};
     std::atomic<unsigned> stream_rate {0}, stream_channels {0}, stream_width {0}, xruns {0}, opens {0};
     mutable std::mutex device_lock; // Guards `device_name`; never taken by the audio thread.
     std::string device_name;
+};
+
+// What the computer records from the MPC: whatever the audio thread hands to
+// push(), which the runtime does with every block an app renders, so the
+// computer hears what the jacks play, after the app's own volume. A separate
+// thread finds the gadget, waits for the computer to start recording, then
+// converts 44.1 kHz to the computer's rate and writes it. drift_trim() keeps
+// the ring near `prime_frames` by nudging that conversion, so a long
+// recording neither runs dry nor overflows. Silence goes out while the ring
+// primes. push() drops everything while nothing is streaming.
+class UsbAudioOutput {
+public:
+    static constexpr unsigned ring_frames = 8192, prime_frames = 1024, input_rate = 44100;
+
+    UsbAudioOutput() = default;
+    ~UsbAudioOutput() { stop(); }
+    UsbAudioOutput(const UsbAudioOutput&) = delete;
+    UsbAudioOutput& operator=(const UsbAudioOutput&) = delete;
+
+    // "auto" finds the UAC2 gadget card; any other value is an ALSA PCM name,
+    // opened at 44.1 kHz when it has no rate control. Called from one control
+    // thread; start() again restarts.
+    void start(const std::string& device);
+    void stop();
+    // The device start() was last given, or empty before the first start().
+    std::string requested() const;
+    // Audio thread: `count` interleaved stereo S32 frames. Never blocks.
+    void push(const int32_t* frames, unsigned count);
+
+    UsbStreamState state() const { return UsbStreamState(current.load(std::memory_order_acquire)); }
+    unsigned rate() const { return stream_rate.load(std::memory_order_relaxed); }
+    std::string json() const;
+
+private:
+    void run(std::string device);
+    void set_state(UsbStreamState state) { current.store(uint8_t(state), std::memory_order_release); }
+    FrameRing<ring_frames> ring;
+    std::thread thread;
+    std::atomic<bool> running {false}, accepting {false};
+    std::atomic<uint8_t> current {uint8_t(UsbStreamState::Stopped)};
+    std::atomic<unsigned> stream_rate {0}, stream_channels {0}, stream_width {0}, xruns {0}, opens {0};
+    std::atomic<int> trim_ppm {0};
+    mutable std::mutex device_lock; // Guards the names; never taken by the audio thread.
+    std::string device_name, requested_name;
 };

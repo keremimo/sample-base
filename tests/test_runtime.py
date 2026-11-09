@@ -58,12 +58,12 @@ class RuntimeTests(unittest.TestCase):
                                    "-Wl,--wrap=snd_pcm_wait", "-Wl,--wrap=snd_pcm_prepare", "-Wl,--wrap=snd_pcm_start"))
             subprocess.run([str(binary)], check=True, timeout=10)
 
-    def test_usb_gadget_input_discovery_rate_changes_and_conversion(self):
+    def test_usb_gadget_both_ways_discovery_rate_changes_and_conversion(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "usb-audio"
             symbols = ("snd_card_next", "snd_ctl_open", "snd_ctl_close", "snd_ctl_card_info", "snd_ctl_card_info_get_driver",
                        "snd_ctl_card_info_get_id", "snd_ctl_elem_read", "snd_pcm_open", "snd_pcm_close", "snd_pcm_wait",
-                       "snd_pcm_readi")
+                       "snd_pcm_readi", "snd_pcm_writei")
             compile_fixture(binary, "tests/usb_audio.cpp", "src/drivers/usb_audio.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=20)
@@ -111,6 +111,15 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIn("push_exit=0", command("status"))
                 self.assertTrue(command("push-exit maybe").startswith("ERR"))
                 self.assertTrue(command("push-exit on").startswith("OK"))
+                # USB output is on by default and waits for a gadget card that this host lacks.
+                usb = json.loads(command("usb-output")[3:])
+                self.assertEqual((usb["requested"], usb["opens"], usb["rate"]), ("auto", 0, 0))
+                self.assertIn(usb["state"], ("missing", "waiting"))
+                self.assertEqual(command("usb-output off"), "OK usb-output off")
+                self.assertIn("usb_output=stopped", command("status"))
+                self.assertEqual(command("usb-output on"), "OK usb-output on")
+                self.assertNotIn("usb_output=stopped", command("status"))
+                self.assertTrue(command("usb-output maybe").startswith("ERR"))
                 self.assertTrue(command("prompt STEP 1/2|K1|Turn left||Pad 1 next").startswith("OK"))
                 self.assertTrue(command("prompt " + "x" * 401).startswith("ERR"))
                 self.assertTrue(command("prompt").startswith("OK"))
@@ -249,7 +258,8 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             runtime = Path(temp) / "runtime"
             app = subprocess.Popen([str(ROOT / "build/sample-base"), "--app", "starter", "--headless", "--no-surface",
-                                    "--audio-output", "null", "--audio-input", "off", "--runtime-dir", str(runtime), "--seconds", "10"],
+                                    "--audio-output", "null", "--audio-input", "off", "--usb-output", "off", "--runtime-dir", str(runtime),
+                                    "--seconds", "10"],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
             client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
             try:
@@ -264,7 +274,7 @@ class RuntimeTests(unittest.TestCase):
                     return client.recv(32768).decode()
                 status = command("status")
                 # The runtime's fields only: the starter adds none.
-                self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1"), status)
+                self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1 usb_output=stopped"), status)
                 self.assertNotIn("page=", status)
                 self.assertEqual(command("audition"), "OK audition pad 1")
                 for _ in range(300):

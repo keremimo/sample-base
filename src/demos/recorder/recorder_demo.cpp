@@ -21,7 +21,7 @@ bool select_source(DemoState& state, Hardware& hardware, InputSource source, con
         const char* profile = source == InputSource::Line ? "line" : source == InputSource::Mic ? "mic" : "off";
         if (!hardware.mixer.input(profile)) { hardware.mixer.input("off"); return false; }
     }
-    if (source == InputSource::Usb && state.usb.state() == UsbInputState::Stopped) state.usb.start(usb_device);
+    if (source == InputSource::Usb && state.usb.state() == UsbStreamState::Stopped) state.usb.start(usb_device);
     state.source.store(uint8_t(source));
     return true;
 }
@@ -35,10 +35,10 @@ std::string source_detail(const DemoState& state, InputSource source, bool captu
     default: return "The left button above the screen chooses an input";
     }
     switch (state.usb.state()) {
-    case UsbInputState::Missing: return "No USB audio gadget card was found";
-    case UsbInputState::Waiting: return "USB-C: play audio from the computer";
-    case UsbInputState::Failed: return "USB-C audio could not be opened";
-    case UsbInputState::Running: {
+    case UsbStreamState::Missing: return "No USB audio gadget card was found";
+    case UsbStreamState::Waiting: return "USB-C: play audio from the computer";
+    case UsbStreamState::Failed: return "USB-C audio could not be opened";
+    case UsbStreamState::Running: {
         char text[96];
         snprintf(text, sizeof(text), "USB-C: %.1f kHz, %u-bit, %u ch%s", state.usb.rate() / 1000.0, state.usb.bits(),
                  state.usb.channels(), state.usb.rate() == sample_rate ? "" : ", converted to 44.1 kHz");
@@ -163,7 +163,7 @@ std::string recorder_status(const DemoState& state) {
     snprintf(fields, sizeof(fields), "source=%s channels=%s recorder=%s recorded_frames=%u play_frame=%u takes=%u usb=%s",
              input_source_names[state.source.load()], input_channel_names[state.channels.load()],
              Recorder::state_names[size_t(state.recorder.state())], state.recorder.length(), state.recorder.position(),
-             state.recorder.takes(), usb_input_state_names[size_t(state.usb.state())]);
+             state.recorder.takes(), usb_stream_state_names[size_t(state.usb.state())]);
     return fields;
 }
 

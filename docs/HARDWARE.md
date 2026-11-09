@@ -47,7 +47,7 @@ The kernel sources remain under their own upstream licences.
 | Surface inputs and outputs | UART3, 4,000,000 baud, `Control Surface` raw MIDI | `HardwareMidi` receives all channel, pressure, system-common, realtime and bounded SysEx messages; queues complete outbound messages |
 | External MIDI | UART5, 31,250 baud, `External MIDI` raw MIDI | The same discovered bidirectional MIDI interface; incoming channel messages play the demo synth at their native MIDI pitches |
 | USB host MIDI | Kernel USB audio/MIDI driver | Input/output subdevices are discovered and reopened after hotplug; disconnect and read failure panic the demo synth |
-| USB audio | Kernel ALSA PCM devices; USB-C device audio from the `UAC2_Gadget` card (`CONFIG_USB_CONFIGFS_F_UAC2`) | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; `UsbAudioInput` finds the gadget by driver name, waits for the host and delivers its capture stream at 44.1 kHz; no fixed USB card number is assumed |
+| USB audio | Kernel ALSA PCM devices; USB-C device audio from the `UAC2_Gadget` card (`CONFIG_USB_CONFIGFS_F_UAC2`) | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; `UsbAudioInput` finds the gadget by driver name, waits for the host and delivers its capture stream at 44.1 kHz; `UsbAudioOutput` sends every app's output to a computer recording from the gadget; no fixed USB card number is assumed |
 | Display | SPI3 ST7796S-compatible panel, 320 × 240, rotation 270 | `Display` finds the connected panel across DRM cards, presents JUCE software images and attempts to restore the previous CRTC on release |
 | Backlight | PWM4, seven brightness indices, maximum index 6 | `Platform` discovers the actual sysfs range, validates explicit changes and restores its original brightness on normal exit |
 | Power | `mains-power`, ADC supply voltage, kernel power handling | `Platform` reads actual power-supply attributes; `SystemServices` observes logind sleep/shutdown notifications and requests a clean app exit |
@@ -111,6 +111,7 @@ python3 device.py ctl monitor 0
 python3 device.py ctl gain 75
 python3 device.py ctl brightness 5
 python3 device.py ctl clock
+python3 device.py ctl usb-output
 ```
 
 Monitoring is off by default. `input off`, `input mic` and `input line` select
@@ -158,8 +159,59 @@ scheduler, and output timing/electrical routing requires hardware validation.
 base currently requires native 44.1 kHz, stereo S32, 128-frame periods and
 at least two periods of buffering. Unsupported playback settings fail
 explicitly; optional capture failure is reported by `capture_active=0`.
-There is no implicit resampling or simultaneous USB/I2S audio bridge; the
-recorder's USB-C input is a separate capture stream, described above.
+There is no implicit resampling of the main stream. USB-C audio in and out
+are separate streams with their own rate conversion, described below.
+
+## USB-C audio output
+
+A computer recording from the MPC over USB-C gets whatever the app renders.
+After every `App::render()` the runtime hands the 128-frame block to
+`UsbAudioOutput` ([src/drivers/usb_audio.h](../src/drivers/usb_audio.h)),
+so the computer hears what the jacks and speaker play, after the app's own
+volume (in the demos, the main volume knob). Apps need no code for it. It is
+on by default; `--usb-output off` starts without it.
+
+The device's gadget configuration on 1.3.0.12
+(`/sys/kernel/config/usb_gadget/ac50/functions/uac2.audio`, read on the MPC)
+has `p_chmask=3`, `p_ssize=4`, `p_srate=48000` and `shared_clock=1`, on the
+card with ID `UAC2Gadget`. The computer can therefore record only stereo
+S32_LE at 48 kHz. The kernel's `u_audio.c` gives the rest: the gadget's
+playback PCM is the stream to the computer, and each USB packet takes
+rate × pitch / interval frames from its ALSA buffer. The PCM-interface
+control `Playback Rate` reads 0 until the computer starts recording.
+
+| Stage | What happens |
+| --- | --- |
+| Waiting | Every 250 ms the output thread looks for the gadget and reads `Playback Rate`. While it is 0 nothing is opened, and `push()` drops blocks rather than queueing audio for a recording that has not started. |
+| Opening | At the computer's rate: 256-frame periods, a four-period buffer (21 ms at 48 kHz), started once the first full buffer is written. A rate change reopens; the rate returning to 0 closes. |
+| Hand-off | The audio thread converts each block to float and pushes it into an 8,192-frame lock-free ring. The output thread primes it to 1,024 frames (23 ms), sending silence until then and again if it runs dry. |
+| Conversion | Linear interpolation from 44.1 kHz to the computer's rate, the converter the USB-C input uses in the other direction, then encoding to the gadget's sample format. |
+| Drift | The AK4558's clock and the computer's USB clock differ by tens of parts per million, enough to empty or fill the ring within minutes. Every 250 ms the ring's average fill sets a trim on the conversion (`drift_trim()` in [src/dsp/frame_ring.h](../src/dsp/frame_ring.h)): 2 ppm per frame away from 1,024, at most ±0.2 %, settling in about 11 seconds. A 100 ppm drift settles 50 frames above the target; against a Mac it settled between −15 and −48 ppm. |
+| Faults | A playback underrun (the thread was starved) re-prepares the stream and counts in `xruns`. Any other error closes it until the next check. |
+
+The gadget's `Playback Pitch 1000000` control could absorb drift instead,
+by changing packet sizes, but it is left alone, like `Capture Pitch`.
+`--usb-output NAME` writes any other ALSA PCM instead, for example an audio
+interface on the USB host port; without a rate control it opens at 44.1 kHz
+and is still trimmed.
+
+```sh
+python3 device.py ctl usb-output
+python3 device.py ctl usb-output off
+python3 device.py ctl usb-output on
+```
+
+`usb-output` returns JSON with the state (`stopped`, `missing`, `waiting`,
+`running` or `failed`), the requested and opened device, rate, channels, bits,
+frames buffered, the current trim in ppm, ring overflows and underruns, PCM
+xruns and opens. `usb-output on` restarts with the `--usb-output` PCM, or the
+gadget when that was `off`. `status` reports `usb_output=STATE`.
+
+Linear interpolation slightly dulls the top octave and leaves faint images
+above it. That is fine for recording ideas and monitoring, not for
+mastering. From the buffer sizes, audio reaches the computer about 45 ms after the jacks. If the
+computer plays its input straight back to the MPC while an app monitors
+USB-C input, the audio loops; the demos never monitor USB-C input.
 
 ## Input recording showcase
 

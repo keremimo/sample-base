@@ -6,6 +6,7 @@
 #include "drivers/platform.h"
 #include "drivers/power_button.h"
 #include "drivers/system_services.h"
+#include "drivers/usb_audio.h"
 #include "runtime/app.h"
 #include "runtime/session.h"
 #include "surface/leds.h"
@@ -27,7 +28,9 @@ class ControlServer;
 class Controller {
 public:
     // Throws when `surface_required` and no control surface is connected.
-    Controller(App& app, bool surface_required);
+    // `usb_output` belongs to run_app(), which feeds it from the audio thread;
+    // the controller only starts, stops and reports it.
+    Controller(App& app, bool surface_required, UsbAudioOutput& usb_output);
     // Service thread. Returns once session.running is cleared and the MIDI
     // thread has stopped; a failure sets session.failed.
     void run(Session& session, ControlServer& server);
@@ -47,9 +50,11 @@ private:
     std::string led(const std::string& text);
     std::string midi_send_command(const std::string& argument);
     std::string mixer_set_command(const std::string& argument);
+    std::string usb_output_command(const std::string& argument);
 
     App& app;
     bool surface_required;
+    UsbAudioOutput& usb_output;
 
     // Hardware, opened in this order.
     HardwareMidi midi;

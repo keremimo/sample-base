@@ -5,6 +5,7 @@
 // The runtime's command line. Usage:
 //   sample-base [--app NAME] [--headless] [--no-surface] [--audio-output PCM]
 //               [--audio-input PCM|off] [--usb-input PCM|auto]
+//               [--usb-output PCM|auto|off]
 //               [--runtime-dir DIR] [--seconds N]
 //   sample-base [--runtime-dir DIR] --ctl COMMAND...   send one control command
 //   sample-base [--runtime-dir DIR] --ctl-stream       commands from stdin
@@ -19,6 +20,7 @@ struct Options {
     // Run
     std::string app = "demos"; // Which app main.cpp starts.
     std::string audio_output = "hw:I2S,0", audio_input = "hw:I2S,0", usb_input = "auto";
+    std::string usb_output = "auto"; // What the computer records over USB-C; "off" opens nothing.
     std::string runtime = "/run/sample-base"; // Also where --ctl finds the app.
     bool headless = false, surface_required = true;
     unsigned seconds = 0; // Return to stock after this long; 0 runs until stopped.

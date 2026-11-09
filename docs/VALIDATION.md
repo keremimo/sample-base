@@ -15,14 +15,23 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `build/preview-recorder.png`, `build/preview-lights.png`,
   `build/preview-pads.png` and `build/preview-seq.png`.
 - Recorder fixtures cover L + R / L / R selection, mono microphone mixing,
-  S16_LE, S24_3LE and S32_LE conversion, 44.1/48/32 kHz linear rate
-  conversion, ring priming, underrun re-priming, overflow and flush, takes
+  S16_LE, S24_3LE and S32_LE decoding and rounded, clipped encoding,
+  44.1/48/32 kHz linear rate conversion both ways, a trimmed conversion
+  without a jump, the drift trim's gain and limits and a simulated 150 ppm
+  drift settling 75 frames above target, ring priming, underrun re-priming, overflow and flush, takes
   refused without an input, record/finish/play/stop, playback mixing,
   route-change and full-buffer endings and stale overview peaks.
 - A fake `UAC2_Gadget` card in front of ALSA's null PCM verifies discovery by
   driver name, waiting without opening while `Capture Rate` is 0, opening at
   the host's rate, conversion into the audio ring, reopening on a rate change
-  and closing when the host stops. The headless app test drives `source`,
+  and closing when the host stops. The same fake card checks the output
+  thread: nothing opened or buffered while `Playback Rate` is 0, opening the
+  playback PCM at the host's rate, every written frame silent, exact or a
+  symmetric ramp between them, reopening on a rate change, closing when the
+  host stops, nothing buffered after `stop()`, and a named PCM without a
+  rate control opening at 44.1 kHz. The headless app test drives
+  `usb-output`, `usb-output off|on` and `usb_output` in `status`; the
+  starter runs with `--usb-output off`. The headless app test drives `source`,
   `channels`, `transport`, `page` and `recorder`, including a USB-C selection
   with no gadget present.
 - Light fixtures cover the measured pad, fader, bank and button messages,
@@ -132,6 +141,14 @@ a bank light and three buttons exactly as requested. Results are in
 `src/surface/leds.h` and `docs/HARDWARE.md`. The
 probe exposed a surface output limit (7 queued messages, one written per
 5 ms pass) that dropped 167 messages; the queue now holds 64 and drains fully.
+USB-C output was then installed and recorded on a Mac with
+`sox -t coreaudio "MPC Sample Audio" -r 48000 -c 2 -b 32 out.wav` while the
+sequencer played: `running` at 48 kHz, stereo, 32-bit, 92 seconds with no
+ring underruns or overflows and no PCM xruns, the drift trim settling between
+−15 and −48 ppm, and nothing buffered or overflowed after the Mac stopped
+recording. The recording's only silence was the main volume knob turned to
+0 by hand for 178 ms, which the surface log shows and the output follows.
+Only macOS has recorded from it so far, and nobody has listened critically.
 Source references and offline tests do not qualify every
 electrical route, latency, sound or device interoperability.
 

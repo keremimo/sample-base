@@ -22,6 +22,7 @@ Options parse_options(int argc, char** argv) {
             else if (option == "--audio-output") options.audio_output = value;
             else if (option == "--audio-input") options.audio_input = value;
             else if (option == "--usb-input") options.usb_input = value;
+            else if (option == "--usb-output") options.usb_output = value;
             else if (option == "--runtime-dir") options.runtime = value;
             else if (option == "--seconds") require(parse_unsigned(value, options.seconds) && options.seconds <= 86400, "Invalid session duration");
             else throw std::runtime_error("Unknown option: " + option);
