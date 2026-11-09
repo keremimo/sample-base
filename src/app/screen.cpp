@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/screen.h"
-#include "pads.h"
-#include "recorder.h"
+#include "surface/pads.h"
+#include "dsp/recorder.h"
 #include "app/light_show.h"
 #include "app/pad_touch.h"
 #include "app/util.h"

@@ -19,14 +19,14 @@ class PlatformTests(unittest.TestCase):
     def test_midi_packets_surface_state_and_platform_files(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "platform"
-            compile_fixture(binary, "tests/platform.cpp", "src/platform.cpp")
+            compile_fixture(binary, "tests/platform.cpp", "src/drivers/platform.cpp")
             subprocess.run([str(binary), str(Path(temp) / "fixture")], check=True)
 
     @unittest.skipUnless(sys.platform == "linux" and shutil.which("dbus-daemon"), "requires Linux system bus libraries")
     def test_storage_service_and_suspend_on_private_bus(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "services"
-            compile_fixture(binary, "tests/system_services.cpp", "src/system_services.cpp", "src/platform.cpp", extra=("-lsystemd",))
+            compile_fixture(binary, "tests/system_services.cpp", "src/drivers/system_services.cpp", "src/drivers/platform.cpp", extra=("-lsystemd",))
             daemon = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:

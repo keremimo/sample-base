@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "controls.h"
-#include "midi.h"
+#include "surface/controls.h"
+#include "surface/midi.h"
 #include <array>
 #include <atomic>
 #include <cstdint>

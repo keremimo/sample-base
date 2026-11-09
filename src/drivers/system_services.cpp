@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "system_services.h"
-#include "platform.h"
+#include "drivers/system_services.h"
+#include "drivers/platform.h"
 #include <map>
 #include <sstream>
 

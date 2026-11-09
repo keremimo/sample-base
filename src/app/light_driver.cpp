@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/light_driver.h"
-#include "controls.h"
+#include "surface/controls.h"
 #include "app/light_show.h"
 #include "app/pad_touch.h"
 #include <algorithm>

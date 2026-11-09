@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "audio.h"
+#include "drivers/audio.h"
 #include <cassert>
 #include <cerrno>
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "audio.h"
+#include "drivers/audio.h"
 #include "app/app_state.h"
 #include "app/synth.h"
 

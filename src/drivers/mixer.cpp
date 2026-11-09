@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "mixer.h"
-#include "platform.h"
+#include "drivers/mixer.h"
+#include "drivers/platform.h"
 #include <sstream>
 #include <algorithm>
 #include <cstring>

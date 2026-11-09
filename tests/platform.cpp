@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "platform.h"
+#include "drivers/platform.h"
+#include "surface/midi.h"
 #include <cassert>
 #include <filesystem>
 #include <fstream>

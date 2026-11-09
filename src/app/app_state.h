@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "audio.h"
-#include "midi.h"
-#include "recorder.h"
-#include "usb_audio.h"
+#include "drivers/audio.h"
+#include "surface/midi.h"
+#include "dsp/recorder.h"
+#include "drivers/usb_audio.h"
 #include "app/pad_touch.h"
 #include "app/page.h"
 #include "app/synth.h"

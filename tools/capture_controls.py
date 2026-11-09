@@ -73,11 +73,11 @@ FOOTER = "Pad 1 next     Pad 2 redo     Pad 3 back"
 
 
 def pad_notes():
-    source = (ROOT / "src/pads.h").read_text()
+    source = (ROOT / "src/surface/pads.h").read_text()
     match = re.search(r"surface_pad_notes\s*\{([^}]*)\}", source)
     notes = [int(value) for value in match.group(1).split(",")] if match else []
     if len(notes) != 16 or len(set(notes)) != 16:
-        raise RuntimeError("src/pads.h does not contain 16 distinct surface pad notes")
+        raise RuntimeError("src/surface/pads.h does not contain 16 distinct surface pad notes")
     return notes
 
 

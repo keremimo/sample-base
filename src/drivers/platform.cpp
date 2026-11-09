@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "platform.h"
+#include "drivers/platform.h"
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
@@ -44,27 +44,6 @@ std::string json_string(const std::string& value) {
         else out << char(byte);
     }
     return out.str() + '"';
-}
-bool parse_midi_hex(const std::string& text, MidiPacket& packet) {
-    MidiPacket candidate;
-    std::istringstream input(text);
-    std::string token;
-    while (input >> token) {
-        if (token.size() != 2 || candidate.size == candidate.bytes.size()) return false;
-        unsigned byte = 0;
-        for (char digit : token) {
-            byte <<= 4;
-            if (digit >= '0' && digit <= '9') byte += digit - '0';
-            else if (digit >= 'a' && digit <= 'f') byte += digit - 'a' + 10;
-            else if (digit >= 'A' && digit <= 'F') byte += digit - 'A' + 10;
-            else return false;
-        }
-        candidate.bytes[candidate.size++] = uint8_t(byte);
-    }
-    MidiStreamParser parser; MidiPacket parsed; unsigned messages = 0;
-    for (unsigned i = 0; i < candidate.size; ++i) parser.feed(candidate.bytes[i], [&](const auto& complete) { parsed = complete; ++messages; });
-    if (messages != 1 || parsed.size != candidate.size || parsed.bytes != candidate.bytes) return false;
-    packet = candidate; return true;
 }
 std::vector<StorageMount> parse_mountinfo(const std::string& text) {
     std::vector<StorageMount> result;

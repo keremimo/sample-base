@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "midi.h"
+#include "surface/midi.h"
 #include <alsa/asoundlib.h>
 #include <array>
 #include <functional>

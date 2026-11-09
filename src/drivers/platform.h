@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "midi.h"
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
 
 std::string json_string(const std::string& value);
-bool parse_midi_hex(const std::string& text, MidiPacket& packet);
 
 struct StorageMount {
     std::string device, path, type;

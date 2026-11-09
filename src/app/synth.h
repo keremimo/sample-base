@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #pragma once
-#include "midi.h"
+#include "surface/midi.h"
 #include <algorithm>
 #include <array>
 #include <cmath>

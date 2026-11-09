@@ -121,7 +121,7 @@ exit; crash recovery returns ownership to the existing stock service.
 by `midi`. For example, `midi-send hw:2,0,0 90 3c 64` sends C4 only if that
 exact discovered port is currently available; use the actual address from
 your inventory. `surface` reports the last raw message, note, pressure and CC
-state. Measured button, knob, wheel and fader names are in `src/controls.h`.
+state. Measured button, knob, wheel and fader names are in `src/surface/controls.h`.
 
 `surface-sync` asks the surface for the current main volume, K1–K3 and
 fader positions. `surface-log [SEQUENCE]` returns up to 256 retained surface packets newer
@@ -251,7 +251,7 @@ calibration commands are sent. The physical pad map was measured on the device
 by tapping pads 1–16 in
 printed-number order. Their channel-10 note numbers are:
 `37, 36, 42, 82, 40, 38, 46, 44, 48, 47, 45, 43, 49, 55, 51, 53`.
-`src/pads.h` is the shared map for routing and screen labels; pad 1 plays C4,
+`src/surface/pads.h` is the shared map for routing and screen labels; pad 1 plays C4,
 pad 2 D4, through pad 16 D6. Note-off, velocity-zero release and polyphonic
 pressure use the same physical map. A held pad sends polyphonic pressure on
 its own note: 0 straight after the note-on, a new value whenever the
@@ -267,7 +267,7 @@ calibration.
 `tools/capture_controls.py` measured every other control with a guided
 on-screen capture: pads 1, 2 and 3 move to the next step, redo it or go back,
 and every packet in between is read losslessly through `surface-log`.
-`src/controls.h` is the shared map; `surface_input()` decodes an event into a
+`src/surface/controls.h` is the shared map; `surface_input()` decodes an event into a
 named button or control. All of these use MIDI channel 1, so a channel-1 note
 whose number matches a pad note is a button, not a pad.
 
@@ -315,7 +315,7 @@ replies with manufacturer `47`, family `5C 00`, member `19 01`.
 The stock trace gave the message types; `tools/probe_leds.py` measured what
 each value shows. It lights one button at a time and the owner taps the pad
 whose colour matches, so every answer is recorded rather than remembered.
-`src/leds.h` is the shared map.
+`src/surface/leds.h` is the shared map.
 
 | Light | Message | Values |
 | --- | --- | --- |
@@ -338,7 +338,7 @@ startup leaves the stock app's last lights in place, apart from the four
 transport lights the demo's recorder sets and the light show. The control commands
 are `led pad 1-16 R G B`, `led fader R G B`, `led bank A-H on|off`,
 `led button NAME off|dim|bright|red-dim|red-bright` (names as in
-`src/controls.h`, ignoring case and punctuation, so `tap-tempo` or `TapTempo`)
+`src/surface/controls.h`, ignoring case and punctuation, so `tap-tempo` or `TapTempo`)
 and `led off`.
 
 ### Light show

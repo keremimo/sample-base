@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "midi.h"
+#include "surface/midi.h"
 #include "app/app_state.h"
 
 // How the app answers the control surface. MIDI thread only.

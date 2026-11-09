@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "usb_audio.h"
-#include "platform.h"
+#include "drivers/usb_audio.h"
+#include "drivers/platform.h"
 #include <alsa/asoundlib.h>
 #include <pthread.h>
 #include <cerrno>

@@ -8,8 +8,8 @@ CFLAGS := -O2 -MMD -MP
 LDLIBS := $(shell pkg-config --libs freetype2 fontconfig alsa libdrm libsystemd) -ldl -pthread -lrt
 MODULE_CPP := $(wildcard $(JUCE)/juce_core/*.cpp $(JUCE)/juce_events/*.cpp $(JUCE)/juce_graphics/*.cpp)
 MODULE_C := $(wildcard $(JUCE)/juce_core/*.c $(JUCE)/juce_graphics/*.c)
-# Reusable MPC interfaces in src/, the app in src/app/; objects mirror the tree.
-SOURCES := $(wildcard src/*.cpp src/app/*.cpp)
+# Every source under src/, at any depth up to src/a/b/; objects mirror the tree.
+SOURCES := $(wildcard src/*.cpp src/*/*.cpp src/*/*/*.cpp)
 OBJECTS := $(addprefix build/obj/,$(notdir $(MODULE_CPP:.cpp=.o) $(MODULE_C:.c=.o))) \
     $(patsubst src/%.cpp,build/obj/%.o,$(SOURCES))
 

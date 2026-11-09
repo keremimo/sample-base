@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "leds.h"
+#include "surface/leds.h"
 #include <cassert>
 #include <vector>
 

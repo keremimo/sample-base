@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "recorder.h"
+#include "dsp/frame_ring.h"
 #include <atomic>
 #include <mutex>
 #include <string>

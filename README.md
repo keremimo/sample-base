@@ -158,8 +158,8 @@ gains a line when it adds a command-line mode.
 - **ALSA raw MIDI** discovers and opens the surface, external and USB ports
   in both directions. Full packets, realtime and SysEx are supported.
   The control surface is read directly. Pads use the measured, nonsequential
-  channel-10 map in `src/pads.h`. Every other button, knob, the wheel and the
-  fader use the measured channel-1 map in `src/controls.h`; wheel Push is
+  channel-10 map in `src/surface/pads.h`. Every other button, knob, the wheel and the
+  fader use the measured channel-1 map in `src/surface/controls.h`; wheel Push is
   note 111. The power button is the PMIC `KEY_POWER` input device.
   Running status, split reads, realtime
   bytes and note-on velocity-zero releases are handled. Queue overflow
@@ -167,11 +167,11 @@ gains a line when it adds a command-line mode.
 - **Built-in synth** mixes sine and triangle oscillators with velocity and
   5 ms attack / 80 ms release envelopes. Sixteen fixed voice slots keep
   rendering bounded, with no allocations, locks or file I/O.
-- **Input recorder** ([src/recorder.h](src/recorder.h)) keeps one
+- **Input recorder** ([src/dsp/recorder.h](src/dsp/recorder.h)) keeps one
   preallocated 60-second stereo take in RAM and runs inside the audio
   callback. Line in and Mic come from the I2S capture pair through the
   existing exclusive `TRS` / `Builtin Microphone` route switch. USB-C input
-  ([src/usb_audio.cpp](src/usb_audio.cpp)) reads the kernel's UAC2 gadget
+  ([src/drivers/usb_audio.cpp](src/drivers/usb_audio.cpp)) reads the kernel's UAC2 gadget
   capture PCM on its own thread, converts the host's rate to 44.1 kHz and
   crosses into the audio thread through a lock-free ring.
 - Fonts come from the MPC's existing Liberation Sans installation.

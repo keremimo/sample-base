@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "clock_io.h"
-#include "hardware_midi.h"
-#include "leds.h"
-#include "midi.h"
-#include "mixer.h"
-#include "platform.h"
-#include "power_button.h"
-#include "recorder.h"
-#include "system_services.h"
+#include "drivers/clock_io.h"
+#include "drivers/hardware_midi.h"
+#include "surface/leds.h"
+#include "surface/midi.h"
+#include "drivers/mixer.h"
+#include "drivers/platform.h"
+#include "drivers/power_button.h"
+#include "dsp/recorder.h"
+#include "drivers/system_services.h"
 #include "app/app_state.h"
 #include "app/light_driver.h"
 #include <array>

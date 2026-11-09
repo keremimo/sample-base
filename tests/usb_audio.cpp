@@ -2,7 +2,7 @@
 // A fake UAC2 gadget card in front of ALSA's null PCM: discovery by driver
 // name, waiting while the host is idle, opening at the host's rate, sample
 // conversion to 44.1 kHz and reopening when the host changes rate.
-#include "usb_audio.h"
+#include "drivers/usb_audio.h"
 #include <alsa/asoundlib.h>
 #include <cassert>
 #include <chrono>

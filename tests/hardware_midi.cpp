@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "controls.h"
-#include "hardware_midi.h"
+#include "surface/controls.h"
+#include "drivers/hardware_midi.h"
 #include <cassert>
 #include <cerrno>
 #include <cstdio>

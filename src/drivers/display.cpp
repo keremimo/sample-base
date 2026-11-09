@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "display.h"
+#include "drivers/display.h"
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <drm_mode.h>

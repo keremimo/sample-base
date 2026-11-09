@@ -18,7 +18,7 @@ class RuntimeTests(unittest.TestCase):
     def test_sync_lines_are_opt_in_and_preserve_kernel_ownership(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "clock"
-            compile_fixture(binary, "tests/clock_io.cpp", "src/clock_io.cpp",
+            compile_fixture(binary, "tests/clock_io.cpp", "src/drivers/clock_io.cpp",
                             extra=("-Wl,--wrap=open", "-Wl,--wrap=close", "-Wl,--wrap=fcntl",
                                    "-Wl,--wrap=ioctl", "-Wl,--wrap=read"))
             subprocess.run([str(binary)], check=True, timeout=5)
@@ -26,7 +26,7 @@ class RuntimeTests(unittest.TestCase):
     def test_power_button_evdev_press_release(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "power"
-            compile_fixture(binary, "tests/power_button.cpp", "src/power_button.cpp", "src/platform.cpp")
+            compile_fixture(binary, "tests/power_button.cpp", "src/drivers/power_button.cpp", "src/drivers/platform.cpp")
             subprocess.run([str(binary), str(Path(temp) / "fixture")], check=True, timeout=5)
 
     def test_mixer_ranges_exclusive_inputs_and_restore(self):
@@ -35,7 +35,7 @@ class RuntimeTests(unittest.TestCase):
             symbols = ("snd_ctl_open", "snd_ctl_close", "snd_ctl_elem_info", "snd_ctl_elem_read", "snd_ctl_elem_write",
                        "snd_ctl_elem_info_get_type", "snd_ctl_elem_info_get_count", "snd_ctl_elem_info_is_readable",
                        "snd_ctl_elem_info_is_writable", "snd_ctl_elem_info_get_min", "snd_ctl_elem_info_get_max")
-            compile_fixture(binary, "tests/mixer.cpp", "src/mixer.cpp", "src/platform.cpp",
+            compile_fixture(binary, "tests/mixer.cpp", "src/drivers/mixer.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=5)
 
@@ -46,14 +46,14 @@ class RuntimeTests(unittest.TestCase):
                        "snd_ctl_card_info_get_name", "snd_ctl_card_info_get_driver", "snd_ctl_rawmidi_next_device",
                        "snd_ctl_rawmidi_info", "snd_rawmidi_info_get_subdevices_count", "snd_rawmidi_info_get_subdevice_name",
                        "snd_rawmidi_open", "snd_rawmidi_close", "snd_rawmidi_drop", "snd_rawmidi_read", "snd_rawmidi_write")
-            compile_fixture(binary, "tests/hardware_midi.cpp", "src/hardware_midi.cpp", "src/platform.cpp",
+            compile_fixture(binary, "tests/hardware_midi.cpp", "src/drivers/hardware_midi.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=5)
 
     def test_partial_audio_io_and_xrun_recovery(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "audio"
-            compile_fixture(binary, "tests/audio.cpp", "src/audio.cpp", "src/platform.cpp",
+            compile_fixture(binary, "tests/audio.cpp", "src/drivers/audio.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", "-Wl,--wrap=snd_pcm_readi", "-Wl,--wrap=snd_pcm_writei",
                                    "-Wl,--wrap=snd_pcm_wait", "-Wl,--wrap=snd_pcm_prepare", "-Wl,--wrap=snd_pcm_start"))
             subprocess.run([str(binary)], check=True, timeout=10)
@@ -64,7 +64,7 @@ class RuntimeTests(unittest.TestCase):
             symbols = ("snd_card_next", "snd_ctl_open", "snd_ctl_close", "snd_ctl_card_info", "snd_ctl_card_info_get_driver",
                        "snd_ctl_card_info_get_id", "snd_ctl_elem_read", "snd_pcm_open", "snd_pcm_close", "snd_pcm_wait",
                        "snd_pcm_readi")
-            compile_fixture(binary, "tests/usb_audio.cpp", "src/usb_audio.cpp", "src/platform.cpp",
+            compile_fixture(binary, "tests/usb_audio.cpp", "src/drivers/usb_audio.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=20)
 

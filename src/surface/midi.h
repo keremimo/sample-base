@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "pads.h"
+#include "surface/pads.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <sstream>
+#include <string>
 
 struct MidiEvent { uint8_t status = 0, key = 0, value = 0; };
 
@@ -179,6 +181,30 @@ private:
     uint8_t status = 0, data[2] {};
     unsigned count = 0;
 };
+
+// One complete MIDI message written as hex bytes ("90 3c 64"); false for
+// anything else, including two messages or a partial one.
+inline bool parse_midi_hex(const std::string& text, MidiPacket& packet) {
+    MidiPacket candidate;
+    std::istringstream input(text);
+    std::string token;
+    while (input >> token) {
+        if (token.size() != 2 || candidate.size == candidate.bytes.size()) return false;
+        unsigned byte = 0;
+        for (char digit : token) {
+            byte <<= 4;
+            if (digit >= '0' && digit <= '9') byte += digit - '0';
+            else if (digit >= 'a' && digit <= 'f') byte += digit - 'a' + 10;
+            else if (digit >= 'A' && digit <= 'F') byte += digit - 'A' + 10;
+            else return false;
+        }
+        candidate.bytes[candidate.size++] = uint8_t(byte);
+    }
+    MidiStreamParser parser; MidiPacket parsed; unsigned messages = 0;
+    for (unsigned i = 0; i < candidate.size; ++i) parser.feed(candidate.bytes[i], [&](const auto& complete) { parsed = complete; ++messages; });
+    if (messages != 1 || parsed.size != candidate.size || parsed.bytes != candidate.bytes) return false;
+    packet = candidate; return true;
+}
 
 inline int pad_index(MidiEvent event) {
     unsigned kind = event.status & 0xf0;

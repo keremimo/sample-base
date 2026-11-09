@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "power_button.h"
+#include "drivers/power_button.h"
 #include <linux/input.h>
 #include <cassert>
 #include <filesystem>

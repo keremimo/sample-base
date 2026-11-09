@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/controller.h"
-#include "controls.h"
-#include "pads.h"
+#include "surface/controls.h"
+#include "surface/pads.h"
 #include "app/control_socket.h"
 #include "app/surface_events.h"
 #include "app/util.h"

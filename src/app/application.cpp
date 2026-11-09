@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "app/application.h"
-#include "audio.h"
-#include "display.h"
+#include "drivers/audio.h"
+#include "drivers/display.h"
 #include "app/app_state.h"
 #include "app/audio_render.h"
 #include "app/control_socket.h"

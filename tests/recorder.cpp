@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "recorder.h"
+#include "dsp/frame_ring.h"
+#include "dsp/recorder.h"
 #include <cassert>
 #include <cmath>
 #include <vector>

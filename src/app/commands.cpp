@@ -4,8 +4,8 @@
 // thread; anything the MIDI thread must do is queued for it. docs/HARDWARE.md
 // lists the commands, and tests/test_runtime.py exercises them.
 #include "app/controller.h"
-#include "audio.h"
-#include "controls.h"
+#include "drivers/audio.h"
+#include "surface/controls.h"
 #include "app/light_show.h"
 #include "app/reports.h"
 #include "app/surface_events.h"

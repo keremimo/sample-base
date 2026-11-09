@@ -89,12 +89,12 @@ The hardware-base build was installed in RAM and started successfully on the
 MPC. Playback and capture were active with zero reported underruns at startup.
 The owner found that the original sequential pad-order assumption was wrong.
 A live capture of pads 1–16 in printed-number order established the explicit
-channel-10 map now recorded in `src/pads.h`; raw captures remain ignored.
+channel-10 map now recorded in `src/surface/pads.h`; raw captures remain ignored.
 The corrected note order still needs the owner's physical confirmation after
 installation. A guided on-screen capture then measured all 24 surface buttons
 (including wheel Push), the main volume, K1–K3, wheel and fader, plus the power
 key. Each step was recorded with no lost packets; the owner performed every
-gesture on the device. Results are in `src/controls.h` and `docs/HARDWARE.md`.
+gesture on the device. Results are in `src/surface/controls.h` and `docs/HARDWARE.md`.
 The main volume knob changed no ALSA mixer control. Tracing the stock app's
 startup writes with a temporary libasound uprobe identified the position
 request; replaying it from sample-base returned K1 18, K2 33, K3 39, main
@@ -104,7 +104,7 @@ button LED with values 1–4 while the owner tapped a matching colour pad
 (68 answers, no lost messages), then pad, fader and pad-bank lights were
 checked by eye. The installed build's `led` commands then lit pads, fader,
 a bank light and three buttons exactly as requested. Results are in
-`src/leds.h` and `docs/HARDWARE.md`. The
+`src/surface/leds.h` and `docs/HARDWARE.md`. The
 probe exposed a surface output limit (7 queued messages, one written per
 5 ms pass) that dropped 167 messages; the queue now holds 64 and drains fully.
 Source references and offline tests do not qualify every

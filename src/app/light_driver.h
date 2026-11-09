@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
-#include "leds.h"
+#include "surface/leds.h"
 #include "app/app_state.h"
 #include <array>
 #include <chrono>
