@@ -77,13 +77,15 @@ int main() {
         assert(midi.send("hw:1,0,0", note));
         midi.flush(); midi.flush(); midi.flush();
         assert(wire == std::vector<uint8_t>({0x90,60,100}));
-        for (unsigned n = 0; n < 7; ++n) assert(midi.send("hw:1,0,0", note));
+        // A full queue drops only the overflow, and one flush drains it all.
+        for (unsigned n = 0; n < HardwareMidi::output_packets; ++n) assert(midi.send("hw:1,0,0", note));
         assert(!midi.send("hw:1,0,0", note));
-        for (unsigned n = 0; n < 7; ++n) midi.flush();
-        assert(wire.size() == 24 && midi.json().find("\"send_drops\":1") != std::string::npos);
+        midi.flush();
+        const size_t written = 3 + 3 * HardwareMidi::output_packets;
+        assert(wire.size() == written && midi.json().find("\"send_drops\":1") != std::string::npos);
         assert(midi.send_surface(surface_position_packet()));
         midi.flush();
-        assert(surface_wire == std::vector<uint8_t>({0xf0,0x47,0x7f,0x5c,0x42,0x00,0x00,0xf7}) && wire.size() == 24);
+        assert(surface_wire == std::vector<uint8_t>({0xf0,0x47,0x7f,0x5c,0x42,0x00,0x00,0xf7}) && wire.size() == written);
         usb_present = false;
         assert(midi.rescan() && handles == 4 && midi.has_surface());
         usb_present = true;

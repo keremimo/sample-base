@@ -10,7 +10,7 @@ struct HardwareMidi::Port {
     MidiPortInfo info;
     snd_rawmidi_t *input = nullptr, *output = nullptr;
     MidiStreamParser parser;
-    std::array<MidiPacket, 8> pending {};
+    std::array<MidiPacket, HardwareMidi::output_packets + 1> pending {};
     unsigned head = 0, tail = 0, offset = 0;
     ~Port() {
         // Nonblocking close: never drain an absent USB device indefinitely.
@@ -126,19 +126,24 @@ bool HardwareMidi::send_surface(const MidiPacket& packet) {
     for (const auto& port : ports) if (port->info.surface && port->output) return send(port->info.address, packet);
     return false;
 }
+// Writes queued packets until the driver buffer is full. A full LED refresh
+// is about 50 messages, so draining one packet per poll would drop most of it.
 void HardwareMidi::flush() {
     for (auto& port : ports) {
-        if (!port->output || port->head == port->tail) continue;
-        const auto& packet = port->pending[port->tail];
-        auto size = snd_rawmidi_write(port->output, packet.bytes.data() + port->offset, packet.size - port->offset);
-        if (size == -EAGAIN || size == 0) continue;
-        if (size < 0) {
-            ++send_drops; port->tail = port->head; port->offset = 0;
-            snd_rawmidi_drop(port->output); snd_rawmidi_close(port->output); port->output = nullptr;
-            continue;
+        while (port->output && port->head != port->tail) {
+            const auto& packet = port->pending[port->tail];
+            unsigned remaining = packet.size - port->offset;
+            auto size = snd_rawmidi_write(port->output, packet.bytes.data() + port->offset, remaining);
+            if (size == -EAGAIN || size == 0) break;
+            if (size < 0) {
+                ++send_drops; port->tail = port->head; port->offset = 0;
+                snd_rawmidi_drop(port->output); snd_rawmidi_close(port->output); port->output = nullptr;
+                break;
+            }
+            port->offset += unsigned(size);
+            if (port->offset < packet.size) break; // short write: buffer full
+            port->offset = 0; port->tail = (port->tail + 1) % port->pending.size();
         }
-        port->offset += unsigned(size);
-        if (port->offset == packet.size) { port->offset = 0; port->tail = (port->tail + 1) % port->pending.size(); }
     }
 }
 bool HardwareMidi::has_surface() const {

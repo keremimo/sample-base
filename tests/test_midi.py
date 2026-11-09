@@ -14,3 +14,10 @@ class MidiTests(unittest.TestCase):
             subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
                             "-I" + str(ROOT / "src"), str(ROOT / "tests/midi.cpp"), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
+
+    def test_surface_light_map_and_change_updates(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "leds"
+            subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                            "-I" + str(ROOT / "src"), str(ROOT / "tests/leds.cpp"), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)

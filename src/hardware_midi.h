@@ -18,6 +18,7 @@ struct MidiPortInfo {
 class HardwareMidi {
 public:
     using Receive = std::function<void(const MidiPortInfo&, const MidiPacket&)>;
+    static constexpr unsigned output_packets = 64; // queued complete messages per output port
     static std::vector<MidiPortInfo> enumerate();
     HardwareMidi();
     ~HardwareMidi();

@@ -7,6 +7,7 @@
 #include "audio.h"
 #include "clock_io.h"
 #include "hardware_midi.h"
+#include "leds.h"
 #include "mixer.h"
 #include "platform.h"
 #include "power_button.h"
@@ -19,6 +20,8 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <algorithm>
+#include <cctype>
+#include <iterator>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -230,6 +233,7 @@ private:
                 MidiSendRequest request;
                 for (unsigned n = 0; n < 32 && midi_output.pop(request); ++n)
                     if (!midi.send(request.address.data(), request.packet)) ++state.midi_send_errors;
+                lights.update([&](const MidiPacket& packet) { return midi.send_surface(packet); }, 48);
                 midi.flush();
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
@@ -295,6 +299,7 @@ private:
             MidiSendRequest request; strcpy(request.address.data(), address.c_str()); request.packet = packet;
             return midi_output.push(request) ? "OK MIDI queued" : "ERR full output queue";
         }
+        if (action == "led") return led(argument);
         if (action == "mixer-set") {
             std::istringstream fields(argument); std::string id;
             fields >> id; std::vector<long> values; long item;
@@ -302,7 +307,43 @@ private:
             if (!fields.eof()) return "ERR invalid mixer values";
             return unsigned_value(id, value) && mixer.set(value, values) ? "OK mixer updated" : "ERR unavailable control, wrong value count or range";
         }
-        return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, midi, midi-send, mixer, mixer-set, input, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
+        return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, led, midi, midi-send, mixer, mixer-set, input, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
+    }
+    // led pad 1-16 R G B | led fader R G B | led bank A-H on|off |
+    // led button NAME off|dim|bright|red-dim|red-bright | led off
+    std::string led(const std::string& text) {
+        std::istringstream fields(text); std::string target, name, extra;
+        fields >> target;
+        auto colour = [&](Rgb& rgb) {
+            unsigned r, g, b;
+            if (!(fields >> r >> g >> b) || r > 127 || g > 127 || b > 127) return false;
+            rgb = {uint8_t(r), uint8_t(g), uint8_t(b)}; return true;
+        };
+        auto done = [&](bool ok) { return ok && !(fields >> extra) ? "OK lights updated" : "ERR use led pad 1-16 R G B, led fader R G B, "
+            "led bank A-H on|off, led button NAME off|dim|bright|red-dim|red-bright or led off; colours are 0-127"; };
+        Rgb rgb;
+        if (target == "off") { lights.all_off(); return done(true); }
+        if (target == "fader") return done(colour(rgb) && lights.fader(rgb));
+        if (target == "pad") { unsigned pad = 0; return done(fields >> pad && pad >= 1 && colour(rgb) && lights.pad(pad - 1, rgb)); }
+        fields >> name;
+        if (target == "bank") {
+            bool on = false, valid = name.size() == 1 && name[0] >= 'A' && name[0] <= 'H' && fields >> extra && (extra == "on" || extra == "off");
+            on = extra == "on"; extra.clear();
+            return done(valid && lights.bank(unsigned(name[0] - 'A'), on));
+        }
+        if (target != "button") return done(false);
+        std::string level; fields >> level;
+        const char* levels[] {"off", "dim", "bright", "red-dim", "red-bright"};
+        auto light = std::find(std::begin(levels), std::end(levels), level);
+        auto key = [](const std::string& text) {
+            std::string result;
+            for (char c : text) if (std::isalnum(static_cast<unsigned char>(c))) result += char(std::tolower(static_cast<unsigned char>(c)));
+            return result;
+        };
+        for (unsigned n = 0; n < surface_buttons.size(); ++n)
+            if (key(surface_buttons[n].name) == key(name) && light != std::end(levels))
+                return done(lights.button(SurfaceButton(n), ButtonLight(light - std::begin(levels))));
+        return done(false);
     }
     static void route(Shared& state, MidiEvent event) {
         int pad = pad_index(event);
@@ -329,6 +370,7 @@ private:
     MidiQueue<4, MidiCatalog> catalog_updates;
     MidiQueue<256, MidiPacket> surface_events;
     MidiQueue<32, MidiSendRequest> midi_output;
+    SurfaceLights lights;
     std::atomic<bool> audition_requested {false}, sync_requested {false};
     unsigned surface_overflows = 0;
 };

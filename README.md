@@ -11,7 +11,8 @@ synth's output level from its actual position at startup, and the screen
 names the last button, knob or power press. The synth has a short attack and release. Presets, recording, sequencing,
 project storage and USB audio bridging are future work. External MIDI now
 plays the demo synth. The reusable base also supplies audio input, mixer and
-jack controls, bidirectional MIDI and hotplug, display/backlight, sync GPIO,
+jack controls, bidirectional MIDI and hotplug, pad/button/bank lights,
+display/backlight, sync GPIO,
 power telemetry, storage-service integration and session recovery.
 See [docs/HARDWARE.md](docs/HARDWARE.md) for APIs, commands and reference wiring.
 

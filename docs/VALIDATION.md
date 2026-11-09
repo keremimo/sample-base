@@ -9,8 +9,12 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Twenty-two regression tests pass on Linux ARM64. On macOS, fourteen
+- Twenty-three regression tests pass on Linux ARM64. On macOS, fifteen
   portable tests pass and eight Linux-specific tests are skipped.
+- Light fixtures cover the measured pad, fader, bank and button messages,
+  which buttons accept red, nothing sent before an application sets a light,
+  change-only updates and a full or limited queue resuming on the next pass.
+  Output fixtures fill the 64-message port queue and drain it in one pass.
 - Control-map fixtures cover every measured button and control number,
   channel separation from pads, release by note-off or velocity zero, signed
   wheel steps, main-volume gain and the lossless surface log. A fake control
@@ -67,10 +71,19 @@ gesture on the device. Results are in `src/controls.h` and `docs/HARDWARE.md`.
 The main volume knob changed no ALSA mixer control. Tracing the stock app's
 startup writes with a temporary libasound uprobe identified the position
 request; replaying it from sample-base returned K1 18, K2 33, K3 39, main
-volume 22 and fader 71, matching the positions last reported by movement. Source references and offline tests do not qualify every
+volume 22 and fader 71, matching the positions last reported by movement.
+The stock trace also identified the LED messages. A guided probe lit each
+button LED with values 1–4 while the owner tapped a matching colour pad
+(68 answers, no lost messages), then pad, fader and pad-bank lights were
+checked by eye. The installed build's `led` commands then lit pads, fader,
+a bank light and three buttons exactly as requested. Results are in
+`src/leds.h` and `docs/HARDWARE.md`. The
+probe exposed a surface output limit (7 queued messages, one written per
+5 ms pass) that dropped 167 messages; the queue now holds 64 and drains fully.
+Source references and offline tests do not qualify every
 electrical route, latency, sound or device interoperability.
 
-Physical pad/knob/button response, LED protocols, listening, microphone/line
+Physical pad/knob/button response, LED brightness steps, listening, microphone/line
 selection, headphone/speaker behavior, USB and TRS MIDI, USB PCM formats,
 backlight changes, sync jacks, storage removal, suspend/resume, wheel return,
 crash restoration and sustained full-polyphony/underrun behavior require
@@ -79,7 +92,7 @@ on-screen control names and main-volume level have not yet been confirmed by
 looking and listening. The public reference establishes the underlying
 transports, not the complete surface microcontroller protocol.
 
-The base supplies raw surface output but does not invent LED colour,
+The base drives only measured LED messages and does not invent
 calibration or battery commands. It reports available supply telemetry
 without inventing a battery percentage. Sync output is an explicit level
 interface, not a qualified musical clock generator. USB PCM selection does

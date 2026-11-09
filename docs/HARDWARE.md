@@ -161,8 +161,9 @@ There is no implicit resampling or simultaneous USB/I2S audio bridge.
 The public serial driver transports bytes; it does not define the surface
 microcontroller's LED colours, pad calibration, battery commands or every
 button/encoder number. Bidirectional transport and full packet callbacks are
-provided for implementing those protocols. No guessed LED SysEx or calibration
-commands are sent at startup. The physical pad map was measured on the device
+provided for implementing those protocols. LED messages are sent only after
+an application or `led` command sets a light; no guessed LED SysEx or
+calibration commands are sent. The physical pad map was measured on the device
 by tapping pads 1–16 in
 printed-number order. Their channel-10 note numbers are:
 `37, 36, 42, 82, 40, 38, 46, 44, 48, 47, 45, 43, 49, 55, 51, 53`.
@@ -216,10 +217,44 @@ was removed afterwards; the stock app and its files were not modified. Stock
 sent only two SysEx commands to the surface: `0x42` once at startup and
 `0x65` for pad colours (`F0 47 7F 5C 65 00 04 PAD R G B F7`). Button LEDs
 are channel-1 CCs numbered like the button notes, with small state values;
-Tap Tempo's LED alternates between 1 and 2 at the tempo. sample-base sends
-only the position request; LED messages are recorded here, not used. Stock's
+Tap Tempo's LED alternates between 1 and 2 at the tempo. Stock's
 separate Identity Request comes from a system `amidi` call; the surface
 replies with manufacturer `47`, family `5C 00`, member `19 01`.
+
+### Lights
+
+The stock trace gave the message types; `tools/probe_leds.py` measured what
+each value shows. It lights one button at a time and the owner taps the pad
+whose colour matches, so every answer is recorded rather than remembered.
+`src/leds.h` is the shared map.
+
+| Light | Message | Values |
+| --- | --- | --- |
+| Pads 1–16 | `F0 47 7F 5C 65 00 04 I R G B F7`, I = printed pad number − 1 | R, G, B 0–127 |
+| Fader light | Same SysEx with I = 16 | R, G, B 0–127; stock leaves it at 101, 101, 101 |
+| Pad bank A–H | Channel-1 CC 57–64 | 0 off; 20 and 127 both looked fully on, so the base sends 127 |
+| White/red buttons | Channel-1 CC = button note | 0 off, 1 dim white, 2 white, 3 dim red, 4 red with some white showing |
+| Pad Bank, Note Repeat, Stop (white), Sample Record, Seq Record (red), Play (green) | Channel-1 CC = button note | 0 off, 1 dim, 2 full; 3 and 4 also showed full |
+
+The white/red buttons are Sample, SEQ, Pad FX, Knob FX, Erase, Chop, Mute,
+Loop, 16 Levels, Sample Select and Tap Tempo. Shift, Minus, Plus, the three
+buttons above the screen and wheel Push have no light. Stock also clears CC
+83–86 at startup. No AC50 light is known for them and they were not probed,
+so the base does not send them.
+
+`SurfaceLights` keeps the requested state, which any thread may change, and
+the MIDI thread sends only the lights that changed, at most 48 messages per
+5 ms pass. Nothing is sent for a light the application has never set, so
+startup leaves the stock app's last lights in place. The control commands
+are `led pad 1-16 R G B`, `led fader R G B`, `led bank A-H on|off`,
+`led button NAME off|dim|bright|red-dim|red-bright` (names as in
+`src/controls.h`, ignoring case and punctuation, so `tap-tempo` or `TapTempo`)
+and `led off`.
+
+Each output port queues 64 complete messages, and every pass writes until the
+driver buffer is full. Before this, a port held 7 messages and wrote one per
+pass, so a burst of LED messages lost all but a few; `midi` reports any
+`send_drops`.
 
 The power button is read from `/dev/input/eventN` by device name, shared and
 never grabbed. On 1.3.0.12 logind is not running and the vendor power-button

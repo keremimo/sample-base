@@ -24,6 +24,7 @@ inMusic public source release. Keep driver-owned power/mute/reset GPIOs in
 Linux; only explicitly requested sync-line access uses GPIO. Keep MIDI
 polling separate from slow platform/service requests. The MIDI-to-audio queue
 has one producer. Raw MIDI/SysEx output and mixer/input changes are opt-in,
-except the measured surface position request sent at startup; never invent
+except the measured surface position request sent at startup; LEDs change
+only when an application sets them through `SurfaceLights`. Never invent
 surface LED/calibration opcodes or battery percentages. Hardware
 reference downloads are optional and stay in ignored `.local/`.
