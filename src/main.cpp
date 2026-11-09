@@ -9,6 +9,8 @@
 #include "runtime/run_app.h"
 #include "demos/demo_app.h"
 #include "demos/tools.h"
+#include "melodee/melodee_app.h"
+#include "melodee/tools.h"
 #include "starter/starter_app.h"
 #include <sys/stat.h>
 #include <exception>
@@ -20,7 +22,8 @@ namespace {
 std::unique_ptr<App> make_app(const Options& options) {
     if (options.app == "demos") return std::make_unique<DemoApp>(options.usb_input);
     if (options.app == "starter") return std::make_unique<StarterApp>();
-    throw std::runtime_error("Unknown app: " + options.app + "; use demos or starter");
+    if (options.app == "melodee") return std::make_unique<MelodeeApp>();
+    throw std::runtime_error("Unknown app: " + options.app + "; use demos, starter or melodee");
 }
 } // namespace
 
@@ -28,6 +31,7 @@ int main(int argc, char** argv) {
     umask(0077);
     try {
         if (auto code = run_demo_tool(argc, argv)) return *code;
+        if (auto code = melodee::run_tool(argc, argv)) return *code;
         auto options = parse_options(argc, argv);
         switch (options.mode) {
         case Options::Mode::Run: { auto app = make_app(options); return run_app(*app, options); }
