@@ -122,6 +122,10 @@ bool HardwareMidi::send(const std::string& address, const MidiPacket& packet) {
     }
     return false;
 }
+bool HardwareMidi::send_surface(const MidiPacket& packet) {
+    for (const auto& port : ports) if (port->info.surface && port->output) return send(port->info.address, packet);
+    return false;
+}
 void HardwareMidi::flush() {
     for (auto& port : ports) {
         if (!port->output || port->head == port->tail) continue;

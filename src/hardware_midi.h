@@ -26,6 +26,7 @@ public:
     bool rescan(); // true if an open input disappeared; caller must panic
     void read(const Receive& receive);
     bool send(const std::string& address, const MidiPacket& packet);
+    bool send_surface(const MidiPacket& packet); // false without a surface output
     void flush();
     bool has_surface() const;
     std::string json() const;

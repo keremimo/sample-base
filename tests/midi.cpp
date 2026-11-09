@@ -97,5 +97,9 @@ int main() {
     assert(is_control(right, SurfaceControl::Wheel) && right.delta == 1 && left.delta == -1 && fast.delta == -3);
     assert(describe_last_input(pack_last_input(left)) == "Wheel -1" && describe_last_input(pack_last_input(right)) == "Wheel +1");
     assert(describe_last_input(pack_last_input(InputKind::Power, 0, 1)) == "Power" && describe_last_input(0).empty());
+    auto request = surface_position_packet();
+    assert(request.size == 8 && request.bytes[0] == 0xf0 && request.bytes[3] == 0x5c && request.bytes[4] == 0x42 && request.bytes[7] == 0xf7);
+    // Measured reply: current positions, then a wheel message with no motion.
+    assert(is_control(surface_input({0xb0,19,22}), SurfaceControl::MainVolume) && surface_input({0xb0,100,0}).delta == 0);
     assert(main_volume_gain(0) == 0.0f && main_volume_gain(127) == 1.0f && main_volume_gain(64) < 0.26f);
 }

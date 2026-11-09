@@ -104,6 +104,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(command("prompt STEP 1/2|K1|Turn left||Pad 1 next").startswith("OK"))
                 self.assertTrue(command("prompt " + "x" * 401).startswith("ERR"))
                 self.assertTrue(command("prompt").startswith("OK"))
+                self.assertTrue(command("surface-sync").startswith("OK"))
                 power = json.loads(command("power")[3:])
                 self.assertEqual((power["key"], power["presses"]), ("KEY_POWER", 0))
                 stream = subprocess.run([str(ROOT / "build/sample-base"), "--runtime-dir", str(runtime), "--ctl-stream"],

@@ -23,6 +23,7 @@ Hardware interfaces are documented in `docs/HARDWARE.md`, using the pinned
 inMusic public source release. Keep driver-owned power/mute/reset GPIOs in
 Linux; only explicitly requested sync-line access uses GPIO. Keep MIDI
 polling separate from slow platform/service requests. The MIDI-to-audio queue
-has one producer. Raw MIDI/SysEx output and mixer/input changes are opt-in;
-never invent surface LED/calibration opcodes or battery percentages. Hardware
+has one producer. Raw MIDI/SysEx output and mixer/input changes are opt-in,
+except the measured surface position request sent at startup; never invent
+surface LED/calibration opcodes or battery percentages. Hardware
 reference downloads are optional and stay in ignored `.local/`.

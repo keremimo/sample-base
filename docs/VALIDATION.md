@@ -64,7 +64,10 @@ installation. A guided on-screen capture then measured all 24 surface buttons
 (including wheel Push), the main volume, K1–K3, wheel and fader, plus the power
 key. Each step was recorded with no lost packets; the owner performed every
 gesture on the device. Results are in `src/controls.h` and `docs/HARDWARE.md`.
-The main volume knob changed no ALSA mixer control. Source references and offline tests do not qualify every
+The main volume knob changed no ALSA mixer control. Tracing the stock app's
+startup writes with a temporary libasound uprobe identified the position
+request; replaying it from sample-base returned K1 18, K2 33, K3 39, main
+volume 22 and fader 71, matching the positions last reported by movement. Source references and offline tests do not qualify every
 electrical route, latency, sound or device interoperability.
 
 Physical pad/knob/button response, LED protocols, listening, microphone/line

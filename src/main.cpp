@@ -183,6 +183,15 @@ private:
         try {
             auto release = std::chrono::steady_clock::time_point::max();
             auto scan = std::chrono::steady_clock::now();
+            // Absolute controls only report when moved, so ask for their
+            // current positions. The reply is applied like any other CC but
+            // is not shown as the last control the player touched.
+            auto syncing_until = std::chrono::steady_clock::time_point::min();
+            auto request_positions = [&] {
+                if (midi.send_surface(surface_position_packet()))
+                    syncing_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+            };
+            request_positions();
             while (state.running.load()) {
                 midi.read([&](const MidiPortInfo& port, const MidiPacket& packet) {
                     if (port.surface) {
@@ -193,7 +202,9 @@ private:
                             auto input = surface_input(event);
                             if (is_button(input, SurfaceButton::WheelPush) && input.pressed && state.push_exit.load()) { state.running.store(false); return; }
                             if (is_control(input, SurfaceControl::MainVolume)) state.gain.store(main_volume_gain(input.value));
-                            if (input.kind == SurfaceInput::Kind::Control || input.pressed) state.last_input.store(pack_last_input(input));
+                            bool moved = input.kind == SurfaceInput::Kind::Control &&
+                                (is_control(input, SurfaceControl::Wheel) ? input.delta != 0 : std::chrono::steady_clock::now() >= syncing_until);
+                            if (moved || input.pressed) state.last_input.store(pack_last_input(input));
                             route(state, event);
                         }
                     } else {
@@ -210,6 +221,7 @@ private:
                     MidiCatalog update {midi.json(), midi.outputs()}; catalog_updates.push(update);
                     scan = now + std::chrono::seconds(1);
                 }
+                if (sync_requested.exchange(false)) request_positions();
                 if (audition_requested.exchange(false)) {
                     route(state, {0x99,surface_pad_notes[0],100}); ++state.synthetic_events;
                     release = now + std::chrono::milliseconds(300);
@@ -236,6 +248,9 @@ private:
             audition_requested.store(true); return "OK audition C4";
         }
         if (action == "clock" && argument.empty()) return "OK " + clock.json();
+        if (action == "surface-sync" && argument.empty()) {
+            sync_requested.store(true); return "OK surface position request queued";
+        }
         if (action == "power" && argument.empty()) return "OK " + power.json();
         if (action == "clock-in" && (argument == "on" || argument == "off"))
             return clock.input(argument == "on") ? "OK sync input updated" : "ERR sync input unavailable";
@@ -287,7 +302,7 @@ private:
             if (!fields.eof()) return "ERR invalid mixer values";
             return unsigned_value(id, value) && mixer.set(value, values) ? "OK mixer updated" : "ERR unavailable control, wrong value count or range";
         }
-        return "ERR use status, hardware, surface, surface-log, push-exit, prompt, power, midi, midi-send, mixer, mixer-set, input, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
+        return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, midi, midi-send, mixer, mixer-set, input, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
     }
     static void route(Shared& state, MidiEvent event) {
         int pad = pad_index(event);
@@ -314,7 +329,7 @@ private:
     MidiQueue<4, MidiCatalog> catalog_updates;
     MidiQueue<256, MidiPacket> surface_events;
     MidiQueue<32, MidiSendRequest> midi_output;
-    std::atomic<bool> audition_requested {false};
+    std::atomic<bool> audition_requested {false}, sync_requested {false};
     unsigned surface_overflows = 0;
 };
 

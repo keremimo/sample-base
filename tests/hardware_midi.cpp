@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "controls.h"
 #include "hardware_midi.h"
 #include <cassert>
 #include <cerrno>
@@ -50,11 +51,14 @@ extern "C" ssize_t __wrap_snd_rawmidi_read(snd_rawmidi_t* port, void* bytes, siz
     if (handle.reads == 2) { data[0] = 0xf7; data[1] = 0x90; data[2] = 60; data[3] = 100; return 4; }
     return -EAGAIN;
 }
+static std::vector<uint8_t> surface_wire;
 extern "C" ssize_t __wrap_snd_rawmidi_write(snd_rawmidi_t* port, const void* bytes, size_t size) {
-    auto& handle = *reinterpret_cast<Handle*>(port); assert(handle.card == 1);
+    auto& handle = *reinterpret_cast<Handle*>(port);
+    auto* data = static_cast<const uint8_t*>(bytes);
+    if (handle.card == 0) { surface_wire.insert(surface_wire.end(), data, data + size); return ssize_t(size); }
+    assert(handle.card == 1);
     if (++handle.writes == 2) return -EAGAIN;
     size_t count = handle.writes == 1 ? 1 : size;
-    auto* data = static_cast<const uint8_t*>(bytes);
     wire.insert(wire.end(), data, data + count); return ssize_t(count);
 }
 int main() {
@@ -77,6 +81,9 @@ int main() {
         assert(!midi.send("hw:1,0,0", note));
         for (unsigned n = 0; n < 7; ++n) midi.flush();
         assert(wire.size() == 24 && midi.json().find("\"send_drops\":1") != std::string::npos);
+        assert(midi.send_surface(surface_position_packet()));
+        midi.flush();
+        assert(surface_wire == std::vector<uint8_t>({0xf0,0x47,0x7f,0x5c,0x42,0x00,0x00,0xf7}) && wire.size() == 24);
         usb_present = false;
         assert(midi.rescan() && handles == 4 && midi.has_surface());
         usb_present = true;
@@ -87,7 +94,7 @@ int main() {
         assert(handles == 4 && midi.json().find("\"input_errors\":1") != std::string::npos);
         fail_read = false; midi.rescan(); assert(handles == 6);
         surface_present = false;
-        assert(midi.rescan() && !midi.has_surface());
+        assert(midi.rescan() && !midi.has_surface() && !midi.send_surface(surface_position_packet()));
     }
     assert(handles == 0);
 }

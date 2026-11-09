@@ -71,6 +71,17 @@ inline bool is_button(const SurfaceInput& input, SurfaceButton button) {
 inline bool is_control(const SurfaceInput& input, SurfaceControl control) {
     return input.kind == SurfaceInput::Kind::Control && input.index == uint8_t(control);
 }
+// Position request, measured from the stock app's startup traffic: inMusic
+// SysEx command 0x42 for product 0x5C with an empty payload. The surface
+// answers at once with absolute CCs for main volume, K1-K3 and the fader at
+// their current physical positions, followed by wheel CC 100 value 0.
+constexpr std::array<uint8_t, 8> surface_position_request {0xf0, 0x47, 0x7f, 0x5c, 0x42, 0x00, 0x00, 0xf7};
+inline MidiPacket surface_position_packet() {
+    MidiPacket packet; packet.size = surface_position_request.size();
+    for (unsigned n = 0; n < packet.size; ++n) packet.bytes[n] = surface_position_request[n];
+    return packet;
+}
+
 // Most recent input, packed for lock-free hand-off to the screen thread;
 // 0 means none. The power button is not MIDI; see power_button.h.
 enum class InputKind : uint8_t { None, Button, Control, Power };

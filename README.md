@@ -7,8 +7,8 @@ boops without running or injecting into the stock MPC application.
 The proof of concept has 16 velocity-sensitive pads mapped to C major from
 C4 to D6, a 16-voice sine/triangle synth, a pad display and an output meter.
 **Push the wheel to return to the stock app.** The main volume knob sets the
-synth's output level, and the screen names the last button, knob or power
-press. The synth has a short attack and release. Presets, recording, sequencing,
+synth's output level from its actual position at startup, and the screen
+names the last button, knob or power press. The synth has a short attack and release. Presets, recording, sequencing,
 project storage and USB audio bridging are future work. External MIDI now
 plays the demo synth. The reusable base also supplies audio input, mixer and
 jack controls, bidirectional MIDI and hotplug, display/backlight, sync GPIO,

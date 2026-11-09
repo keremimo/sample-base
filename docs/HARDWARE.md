@@ -123,7 +123,8 @@ exact discovered port is currently available; use the actual address from
 your inventory. `surface` reports the last raw message, note, pressure and CC
 state. Measured button, knob, wheel and fader names are in `src/controls.h`.
 
-`surface-log [SEQUENCE]` returns up to 256 retained surface packets newer
+`surface-sync` asks the surface for the current main volume, K1–K3 and
+fader positions. `surface-log [SEQUENCE]` returns up to 256 retained surface packets newer
 than the sequence, oldest first, with receipt timestamps and a `next` cursor;
 the last 1,024 packets are retained. `power` reports the power key.
 `prompt HEADER|TITLE|DETAIL|STATUS|FOOTER` replaces the instrument screen
@@ -196,12 +197,29 @@ whose number matches a pad note is a button, not a pad.
 | Power | `KEY_POWER` on the `rk805 pwrkey` evdev device, not MIDI |
 
 Buttons send note-on velocity 127 when pressed and note-off velocity 0 when
-released. The knobs and fader report absolute positions only when they move;
-the wheel sent one message per detent in the capture, and larger relative
-steps are decoded as signed 7-bit values. No touch-sensing messages were
-observed. Main volume changed no ALSA mixer control: it is surface MIDI only,
-so the demo maps it to software output gain with a squared taper. The gain
-stays at its previous value until the knob first moves.
+released. The knobs and fader send absolute positions when they move; the
+wheel sent one message per detent in the capture, and larger relative steps
+are decoded as signed 7-bit values. No touch-sensing messages were observed.
+Main volume changed no ALSA mixer control: it is surface MIDI only, so the
+demo maps it to software output gain with a squared taper.
+
+At startup sample-base sends the position request `F0 47 7F 5C 42 00 00 F7`
+(inMusic SysEx command `0x42`, product `0x5C`, empty payload). The surface
+answers at once with CC 19, 16, 17, 18 and 20 at their current physical
+positions, then wheel CC 100 value 0, so main volume and the surface state
+match the hardware before anything moves. `surface-sync` repeats the request.
+The reply is applied normally but is not shown as the last control touched.
+
+The request was found by tracing the stock app's `snd_rawmidi_write()` calls
+during one startup, using a temporary uprobe on the device's libasound that
+was removed afterwards; the stock app and its files were not modified. Stock
+sent only two SysEx commands to the surface: `0x42` once at startup and
+`0x65` for pad colours (`F0 47 7F 5C 65 00 04 PAD R G B F7`). Button LEDs
+are channel-1 CCs numbered like the button notes, with small state values;
+Tap Tempo's LED alternates between 1 and 2 at the tempo. sample-base sends
+only the position request; LED messages are recorded here, not used. Stock's
+separate Identity Request comes from a system `amidi` call; the surface
+replies with manufacturer `47`, family `5C 00`, member `19 01`.
 
 The power button is read from `/dev/input/eventN` by device name, shared and
 never grabbed. On 1.3.0.12 logind is not running and the vendor power-button
