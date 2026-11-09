@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "light_show.h"
+#include "app/light_show.h"
 #include <cassert>
 #include <set>
 #include <tuple>

@@ -56,7 +56,7 @@ is needed.
 
 The build downloads [JUCE 9.0.5](https://github.com/juce-framework/JUCE/releases/tag/9.0.5),
 pinned to revision `d60b7a78030661574a615b586d9325ba7a7fa7dd`, into ignored
-`build/deps/JUCE`. All synth code is included in [src/synth.h](src/synth.h).
+`build/deps/JUCE`. All synth code is included in [src/app/synth.h](src/app/synth.h).
 
 On ARM64 Debian Linux, install the packages in `tools/Dockerfile`, then run
 `python3 tools/dependencies.py` and `make -j4` for an equivalent native build.
@@ -104,6 +104,34 @@ For a bounded test that automatically returns to stock:
 ```sh
 python3 device.py start --seconds 45
 ```
+
+## Source layout
+
+`src/` holds the reusable MPC interfaces; the beep/boop app built on them
+lives in `src/app/`. Base headers are included by name (`"midi.h"`), app
+headers with their folder (`"app/screen.h"`), so each include shows its layer.
+Base code never includes app code.
+
+| Path | What it is |
+| --- | --- |
+| `src/main.cpp` | Entry point: parses options and runs one mode |
+| `src/*.h`, `src/*.cpp` | Hardware and surface interfaces: audio, display, MIDI, mixer, LEDs, pads and controls, power, storage, sync, USB audio, recorder |
+| `src/app/options` | Command line |
+| `src/app/application` | Starts the threads and draws the screen until exit |
+| `src/app/app_state.h` | Everything the audio, MIDI, service and screen threads share |
+| `src/app/controller` | Owns the hardware; runs the service and MIDI threads |
+| `src/app/commands.cpp` | The `--ctl` control commands |
+| `src/app/control_socket` | Control socket server and `--ctl` client |
+| `src/app/surface_events` | What pads, buttons and knobs do |
+| `src/app/audio_render` | Audio callback: synth, recorder and mix |
+| `src/app/light_driver` | Light show and recorder transport lights |
+| `src/app/screen_feed` | Per-frame copy of shared state for the screen |
+| `src/app/screen`, `synth.h`, `light_show.h` | Drawing, the synth and the light show scenes |
+| `src/app/reports` | `status`, `recorder` and surface JSON replies |
+| `src/app/offline` | `--self-test`, previews and `--hardware` |
+
+A new feature normally gets its own file in `src/app/`; `main.cpp` only
+gains a line when it adds a command-line mode.
 
 ## Implementation
 

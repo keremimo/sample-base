@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "screen.h"
-#include "light_show.h"
+#include "app/screen.h"
 #include "pads.h"
 #include "recorder.h"
+#include "app/light_show.h"
+#include "app/util.h"
 #include <cmath>
 #include <stdexcept>
 
@@ -24,6 +25,16 @@ float meter_position(float peak) {
     if (peak <= 0.0f) return 0.0f;
     return juce::jlimit(0.0f, 1.0f, (20.0f * std::log10(peak) + 48.0f) / 48.0f);
 }
+}
+
+juce::String default_font_path() {
+    const juce::String device = "/usr/share/fonts/ttf/LiberationSans-Regular.ttf";
+    return juce::File(device).existsAsFile() ? device : "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
+}
+void save_png(const juce::Image& image, const std::string& path) {
+    juce::FileOutputStream output {juce::File(path)};
+    require(output.openedOk() && output.setPosition(0) && output.truncate().wasOk() &&
+            juce::PNGImageFormat().writeImageToStream(image, output), "Write screen preview");
 }
 
 Screen::Screen(const juce::String& font_path) {

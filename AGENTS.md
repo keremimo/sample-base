@@ -10,6 +10,10 @@ ignored `build/` or `.local/`. Preserve dependency attribution and licences.
 Use four-space indentation, bounded audio/MIDI queues and no allocation or
 file I/O in rendering callbacks. Keep screen work off the audio thread.
 
+Keep `src/main.cpp` to option parsing and mode dispatch. Reusable hardware
+interfaces live in `src/`; app code lives in `src/app/`, one responsibility
+per file (see README "Source layout"). Base code never includes `app/`.
+
 Run `./build.sh` and `python3 -m unittest discover -s tests -v`.
 `python3 device.py start` installs to RAM and switches apps; `stock` returns
 to the existing stock service, including its existing plugin configuration.

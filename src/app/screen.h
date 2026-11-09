@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "app/page.h"
 #include <juce_graphics/juce_graphics.h>
 
 #include <array>
@@ -16,8 +17,6 @@ struct RecorderView {
     bool hint = false;
     std::array<uint8_t, columns> waveform {};
 };
-
-enum class Page : uint8_t { Synth, Recorder, Lights };
 
 struct ScreenState {
     uint32_t held = 0;
@@ -42,3 +41,7 @@ private:
     juce::Typeface::Ptr typeface;
     juce::Image image {juce::Image::ARGB, 320, 240, true};
 };
+
+// The Liberation Sans file on the MPC, or its Debian path for host builds.
+juce::String default_font_path();
+void save_png(const juce::Image& image, const std::string& path);

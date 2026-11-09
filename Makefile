@@ -1,6 +1,6 @@
 CXX ?= g++
 JUCE := build/deps/JUCE/modules
-CPPFLAGS := -I$(JUCE) $(shell pkg-config --cflags freetype2 fontconfig alsa libdrm libsystemd) \
+CPPFLAGS := -Isrc -I$(JUCE) $(shell pkg-config --cflags freetype2 fontconfig alsa libdrm libsystemd) \
     -DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DJUCE_STANDALONE_APPLICATION=1 \
     -DJUCE_USE_CURL=0 -DJUCE_WEB_BROWSER=0 -DNDEBUG
 CXXFLAGS := -std=c++17 -O2 -pthread -MMD -MP
@@ -8,10 +8,10 @@ CFLAGS := -O2 -MMD -MP
 LDLIBS := $(shell pkg-config --libs freetype2 fontconfig alsa libdrm libsystemd) -ldl -pthread -lrt
 MODULE_CPP := $(wildcard $(JUCE)/juce_core/*.cpp $(JUCE)/juce_events/*.cpp $(JUCE)/juce_graphics/*.cpp)
 MODULE_C := $(wildcard $(JUCE)/juce_core/*.c $(JUCE)/juce_graphics/*.c)
+# Reusable MPC interfaces in src/, the app in src/app/; objects mirror the tree.
+SOURCES := $(wildcard src/*.cpp src/app/*.cpp)
 OBJECTS := $(addprefix build/obj/,$(notdir $(MODULE_CPP:.cpp=.o) $(MODULE_C:.c=.o))) \
-    build/obj/main.o build/obj/display.o build/obj/screen.o build/obj/audio.o \
-    build/obj/platform.o build/obj/hardware_midi.o build/obj/mixer.o build/obj/system_services.o build/obj/clock_io.o \
-    build/obj/power_button.o build/obj/usb_audio.o
+    $(patsubst src/%.cpp,build/obj/%.o,$(SOURCES))
 
 all: build/sample-base
 build/sample-base: $(OBJECTS)

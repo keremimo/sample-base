@@ -1,9 +1,9 @@
 # MPC Sample platform base
 
 This is an independent userspace application base for the MPC Sample AC50.
-Applications reuse the interfaces in `src/`; the included beep/boop app is a
-small example. Drivers, regulators, codec sequencing and hardware ownership
-remain with Linux.
+Applications reuse the interfaces in `src/`; the included beep/boop app in
+`src/app/` is a small example. Drivers, regulators, codec sequencing and
+hardware ownership remain with Linux.
 
 ## Reference and reproducibility
 
@@ -338,7 +338,7 @@ and `led off`.
 
 ### Light show
 
-`src/light_show.h` is a looping LED showcase of ten scenes (48.9 s) built only
+`src/app/light_show.h` is a looping LED showcase of ten scenes (48.9 s) built only
 from the measured messages above. `light_frame(ms)` is a pure function of the
 position in the loop: the MIDI thread requests a frame every 25 ms while the
 light page is open, and the screen draws the same frame as its mirror.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "synth.h"
+#include "app/synth.h"
 #include <cassert>
 #include <cmath>
 
