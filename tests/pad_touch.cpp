@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "app/pad_touch.h"
+#include "demos/pad_touch/pad_touch.h"
 #include <cassert>
 #include <cmath>
 

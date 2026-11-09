@@ -65,4 +65,15 @@ int main() {
     // 17 buttons, 7 banks (H is already off) and 17 RGB lights changed.
     assert(lights.update(send, 64) == 17 + 7 + 17 - 10);
     assert(lights.update(send, 64) == 0);
+
+    // Release turns off only what the application set, and nothing if it set nothing.
+    SurfaceLights fresh;
+    fresh.release();
+    assert(fresh.update(send, 64) == 0);
+    fresh.pad(4, {10, 20, 30}); fresh.button(SurfaceButton::Play, ButtonLight::Bright);
+    assert(fresh.update(send, 64) == 2);
+    wire.clear();
+    fresh.release();
+    assert(fresh.update(send, 64) == 2 && wire.size() == 2);
+    assert(wire[0] == std::vector<uint8_t>({0xb0, 82, 0}) && wire[1] == bytes(surface_rgb_packet(4, {})));
 }

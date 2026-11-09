@@ -182,6 +182,13 @@ private:
     unsigned count = 0;
 };
 
+// The channel message in `packet`; false for SysEx, clock and other system messages.
+inline bool channel_event(const MidiPacket& packet, MidiEvent& event) {
+    if (packet.size < 2 || packet.bytes[0] >= 0xf0) return false;
+    event = {packet.bytes[0], packet.bytes[1], packet.size == 3 ? packet.bytes[2] : uint8_t(0)};
+    return true;
+}
+
 // One complete MIDI message written as hex bytes ("90 3c 64"); false for
 // anything else, including two messages or a partial one.
 inline bool parse_midi_hex(const std::string& text, MidiPacket& packet) {

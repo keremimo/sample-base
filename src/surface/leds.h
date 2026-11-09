@@ -93,6 +93,16 @@ public:
         for (unsigned n = 0; n < surface_bank_lights; ++n) bank(n, false);
         for (unsigned n = 0; n < buttons.size(); ++n) button(SurfaceButton(n), ButtonLight::Off);
     }
+    // Turns off every light the application has set, leaving the others
+    // untouched. The runtime calls it on exit, so the next app starts dark.
+    void release() {
+        for (unsigned n = 0; n < surface_rgb_lights; ++n)
+            if (colours[n].load(std::memory_order_relaxed) != unset_rgb) rgb(n, {});
+        for (unsigned n = 0; n < surface_bank_lights; ++n)
+            if (banks[n].load(std::memory_order_relaxed) != unset_light) bank(n, false);
+        for (unsigned n = 0; n < buttons.size(); ++n)
+            if (buttons[n].load(std::memory_order_relaxed) != unset_light) button(SurfaceButton(n), ButtonLight::Off);
+    }
     // Sends up to `limit` changed lights through `send(const MidiPacket&)`,
     // which returns false when its queue is full; the rest wait for the next
     // call. Returns the number of messages sent.

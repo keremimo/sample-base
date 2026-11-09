@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "app/synth.h"
+#include "demos/synth/pad_scale.h"
+#include "demos/synth/synth.h"
 #include <cassert>
 #include <cmath>
+#include <string>
 
 using Buffer = std::array<int32_t, Synth::block_size * 2>;
 
@@ -81,4 +83,9 @@ int main() {
     synth.midi({0x90, 255, 127}); synth.midi({0x90, 60, 255});
     synth.midi({0xb0, 60, 127});
     assert(energy(synth, 4) == 0);
+
+    // Pads play C major from C4 (pad 1) to D6 (pad 16), labelled to match.
+    const uint8_t pitches[] = {60,62,64,65,67,69,71,72,74,76,77,79,81,83,84,86};
+    for (unsigned pad = 0; pad < 16; ++pad) assert(pad_scale_notes[pad] == pitches[pad]);
+    assert(std::string(pad_note_labels[0]) == "C4" && std::string(pad_note_labels[15]) == "D6");
 }
