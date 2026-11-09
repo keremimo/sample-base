@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Fetch the pinned public JUCE dependency into ignored build storage."""
+"""Fetch the pinned public dependencies into ignored build storage: JUCE, and
+whatever an app's own src/<app>/dependencies.py fetches."""
 from pathlib import Path
+import importlib.util
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +18,12 @@ def prepare():
     revision = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
     if revision != JUCE_REVISION:
         raise RuntimeError("JUCE revision mismatch; remove build/deps/JUCE and rebuild")
+    # An app may fetch its own pinned files (fonts, data) with a prepare(root).
+    for script in sorted((ROOT / "src").glob("*/dependencies.py")):
+        spec = importlib.util.spec_from_file_location(script.parent.name + "_dependencies", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.prepare(ROOT)
 
 
 if __name__ == "__main__":
