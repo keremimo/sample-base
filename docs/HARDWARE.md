@@ -255,9 +255,10 @@ printed-number order. Their channel-10 note numbers are:
 pad 2 D4, through pad 16 D6. Note-off, velocity-zero release and polyphonic
 pressure use the same physical map. A held pad sends polyphonic pressure on
 its own note: 0 straight after the note-on, a new value whenever the
-pressure changes, and 0 again just before the note-off. The captures so far
-reached pressure 16; the full range has not been measured, so the pad touch
-page shows raw values 0–127. The earlier sequential 36–51 assumption
+pressure changes, and 0 again just before the note-off. Pressure uses the
+full range: in one session on 9 November 2026, pad 5 sent 1,009 pressure
+messages with 125 distinct values from 0 to 127, and strike velocities went
+as low as 3. The earlier sequential 36–51 assumption
 was incorrect. This changes note routing, not sensor sensitivity or factory
 calibration.
 
