@@ -184,8 +184,7 @@ Source references and offline tests do not qualify every
 electrical route, latency, sound or device interoperability.
 
 Physical pad/knob/button response, LED brightness steps, listening, microphone/line
-selection, headphone/speaker behavior, plugging and unplugging headphones
-and line out while sample-base runs, USB and TRS MIDI, USB PCM formats,
+selection, headphone/speaker behavior, USB and TRS MIDI, USB PCM formats,
 backlight changes, sync jacks, storage removal, suspend/resume, wheel return,
 crash restoration and sustained full-polyphony/underrun behavior require
 hardware confirmation. The pad and control maps are measured, but the
@@ -219,6 +218,17 @@ headphones plugged in and line out empty, and five mounts: `/` and
 playback or capture underruns occurred while it read. The Knob FX button,
 its light and wheel stepping use the same paths as the other pages but have
 not yet been pressed and looked at on the device.
+
+Jack detection ran on the MPC from a RAM install. The I2S card accepted the
+event subscription (`events` true) and both jacks started empty, as the
+mixer read them. With a guided on-screen prompt and `jacks` read every
+250 ms over one `--ctl-stream` session, headphones were plugged in and
+pulled out, then line out. Each of the four moves showed up once, with the
+right jack and state, and nothing else changed: no contact bounce got
+through the kernel's debounce, and the other jack never moved. Both ended at
+two changes, `status` read `headphones=0 line_out=0`, and no playback or
+capture underruns occurred. What reaches the ears on each jack, and the
+speaker while they are plugged, was not checked.
 
 The step sequencer ran on the MPC from a RAM install. A four-second remote
 run at 110 BPM played the default groove on schedule (9 kicks, 4 claps, 17
