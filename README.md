@@ -1,0 +1,119 @@
+# sample-base
+
+A small, standalone JUCE application for **MPC Sample AC50 firmware 1.3.0.12**.
+It draws its own screen, reads the physical pads and makes simple beeps and
+boops without running or injecting into the stock MPC application.
+
+The proof of concept has 16 velocity-sensitive pads mapped to C major from
+C4 to D6, a 16-voice sine/triangle synth, a pad display and an output meter.
+**Push the wheel to return to the stock app.** The synth has a short attack
+and release and fixed output gain. Presets, knobs, recording, sequencing,
+project storage, external MIDI and USB audio bridging are future work.
+
+## Build
+
+On a Mac, install Docker and Python 3, then run:
+
+```sh
+git clone https://github.com/keremimo/sample-base.git
+cd sample-base
+./build.sh
+```
+
+This builds Linux ARM64 binaries in a Debian container, runs the tests,
+renders a note and its release into `build/test.wav`, and creates
+`build/preview.png`. The complete app is `build/sample-base`; no sound module,
+factory-preset bank or sibling checkout is needed.
+
+The build downloads [JUCE 9.0.5](https://github.com/juce-framework/JUCE/releases/tag/9.0.5),
+pinned to revision `d60b7a78030661574a615b586d9325ba7a7fa7dd`, into ignored
+`build/deps/JUCE`. All synth code is included in [src/synth.h](src/synth.h).
+
+On ARM64 Debian Linux, install the packages in `tools/Dockerfile`, then run
+`python3 tools/dependencies.py` and `make -j4` for an equivalent native build.
+The offline app checks are:
+
+```sh
+build/sample-base --self-test build/test.wav
+build/sample-base --preview build/preview.png
+```
+
+Neither offline mode opens the MPC's audio, display or control surface.
+
+## Run on the MPC
+
+Connect USB networking with root SSH access configured:
+
+```sh
+python3 device.py start
+python3 device.py status
+python3 device.py ctl audition
+python3 device.py screenshot
+python3 device.py stock
+```
+
+The helper defaults to `192.168.155.1:2222` and
+`~/.ssh/mpc_sample_client_ed25519`. `--host`, `--port` and `--key` override
+these. Supply your own SSH key and keep it outside this repository.
+The start command restarts applications, so finish any project edits first;
+there is no additional confirmation prompt.
+
+Start verifies the known stock identity, copies the app into a **new RAM
+directory**, checks its hash, and runs its audio self-test before switching.
+An independent `sample-base.service` stops `ac50.service` for the session and
+starts it again after **normal exit, wheel Push, remote stop, startup failure,
+or a process crash**. Existing stock/plugin startup configuration is preserved.
+The session unit and binaries live under `/run`; reboot uses the previous
+startup configuration. No firmware, stock libraries or SD startup files change.
+
+For a bounded test that automatically returns to stock:
+
+```sh
+python3 device.py start --seconds 45
+```
+
+## Implementation
+
+- **JUCE 9 graphics** draws to a software `juce::Image`. DRM presents the
+  image on the existing ST7796S panel driver. X11, a compositor and OpenGL
+  are unnecessary. This is an embedded app loop, not a desktop window.
+- **ALSA** owns the I2S output at 44.1 kHz, stereo S32, with 128-frame
+  processing blocks and a 512-frame hardware buffer. Drawing stays on a
+  separate thread from audio; a bounded queue carries MIDI to the synth.
+- **ALSA raw MIDI** reads the control surface directly. Pads send notes
+  36–51; wheel Push is control 111. Running status, split reads, realtime
+  bytes and note-on velocity-zero releases are handled. Queue overflow
+  clears pending events and silences voices rather than losing a note-off.
+- **Built-in synth** mixes sine and triangle oscillators with velocity and
+  5 ms attack / 80 ms release envelopes. Sixteen fixed voice slots keep
+  rendering bounded, with no allocations, locks or file I/O.
+- Fonts come from the MPC's existing Liberation Sans installation.
+
+The hardware reference is inMusic's
+[MPC Sample 1.3.0 source release](https://github.com/inmusic-software/az0x-open-source/tree/mpc-sample/1.3.0),
+especially the kernel's `rk3566-az07-ac50.dts`,
+`drivers/gpu/drm/tiny/st7796s.c` and `sound/drivers/serial-generic.c`.
+Existing kernel drivers are used; no kernel rebuild or installation is needed.
+
+## Validation and licensing
+
+See [docs/VALIDATION.md](docs/VALIDATION.md) for checked behavior and hardware
+limitations. Run the portable regression tests with:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+Copyright (C) 2026 Kerem Kilic (Ellic Studio). The standalone app and its
+project tooling are [AGPL-3.0-only](LICENSE), using JUCE's open-source option;
+JUCE also offers commercial licensing. The adapted privacy checker retains
+its [MIT licence](LICENSES/MPC-Plugins-MIT.txt).
+See [THIRD_PARTY.md](THIRD_PARTY.md) for attribution and scope.
+Proprietary firmware, keys, projects, captures, downloaded dependencies and
+binaries stay out of Git.
+
+Contributions are welcome under the licence of the affected files. Before
+committing, enable the privacy hook with `git config core.hooksPath .githooks`
+and run `python3 tools/check_private_files.py` after staging. Keep generated
+builds and local device material in ignored storage. This is an independent
+community project, unaffiliated with Akai Professional or inMusic.
