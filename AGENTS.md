@@ -18,3 +18,11 @@ Always retain crash, remote-stop and reboot recovery. Never overwrite mapped
 binaries. Distinguish device automation from physical controls and listening.
 
 Commit all outstanding source changes at completion. Use Conventional Commits.
+
+Hardware interfaces are documented in `docs/HARDWARE.md`, using the pinned
+inMusic public source release. Keep driver-owned power/mute/reset GPIOs in
+Linux; only explicitly requested sync-line access uses GPIO. Keep MIDI
+polling separate from slow platform/service requests. The MIDI-to-audio queue
+has one producer. Raw MIDI/SysEx output and mixer/input changes are opt-in;
+never invent surface LED/calibration opcodes or battery percentages. Hardware
+reference downloads are optional and stay in ignored `.local/`.

@@ -16,21 +16,26 @@ static void check(bool ok, const char* what) {
 
 Display::Display() {
     try {
-        fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
-        check(fd >= 0, "Open display");
-        check(drmSetMaster(fd) == 0, "Acquire display (stop stock app first)");
-        std::unique_ptr<drmModeRes, decltype(&drmModeFreeResources)> resources(drmModeGetResources(fd), drmModeFreeResources);
-        check(bool(resources), "Read display resources");
+        std::unique_ptr<drmModeRes, decltype(&drmModeFreeResources)> resources(nullptr, drmModeFreeResources);
         std::unique_ptr<drmModeConnector, decltype(&drmModeFreeConnector)> connector(nullptr, drmModeFreeConnector);
-        for (int i = 0; i < resources->count_connectors; ++i) {
-            connector.reset(drmModeGetConnector(fd, resources->connectors[i]));
-            if (connector && connector->connection == DRM_MODE_CONNECTED && connector->count_modes) break;
-            connector.reset();
+        drmModeModeInfo mode {};
+        for (unsigned index = 0; index < 16 && fd < 0; ++index) {
+            std::string path = "/dev/dri/card" + std::to_string(index);
+            int candidate = open(path.c_str(), O_RDWR | O_CLOEXEC);
+            if (candidate < 0) continue;
+            resources.reset(drmModeGetResources(candidate));
+            if (resources) for (int n = 0; n < resources->count_connectors && !connector; ++n) {
+                std::unique_ptr<drmModeConnector, decltype(&drmModeFreeConnector)> current(drmModeGetConnector(candidate, resources->connectors[n]), drmModeFreeConnector);
+                if (!current || current->connection != DRM_MODE_CONNECTED) continue;
+                for (int m = 0; m < current->count_modes; ++m) if (current->modes[m].hdisplay == 320 && current->modes[m].vdisplay == 240) {
+                    mode = current->modes[m]; connector = std::move(current); break;
+                }
+            }
+            if (connector) fd = candidate;
+            else close(candidate);
         }
-        check(bool(connector), "Find connected panel");
-        drmModeModeInfo mode = connector->modes[0];
-        if (mode.hdisplay != 320 || mode.vdisplay != 240)
-            throw std::runtime_error("Expected MPC Sample 320 x 240 panel");
+        check(fd >= 0 && bool(resources) && bool(connector), "Find MPC 320 x 240 panel");
+        check(drmSetMaster(fd) == 0, "Acquire display (stop stock app first)");
         uint32_t crtc = 0;
         for (int i = 0; i < connector->count_encoders && !crtc; ++i) {
             auto* encoder = drmModeGetEncoder(fd, connector->encoders[i]);
@@ -40,6 +45,8 @@ Display::Display() {
             drmModeFreeEncoder(encoder);
         }
         check(crtc != 0, "Find display controller");
+        active_crtc = crtc; connector_id = connector->connector_id;
+        previous = drmModeGetCrtc(fd, crtc);
         drm_mode_create_dumb create {};
         create.width = 320; create.height = 240; create.bpp = 32;
         check(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) == 0, "Allocate screen buffer");
@@ -51,6 +58,7 @@ Display::Display() {
         check(pixels != MAP_FAILED, "Map screen memory");
         memset(pixels, 0, bytes);
         check(drmModeSetCrtc(fd, crtc, framebuffer, 0, 0, &connector->connector_id, 1, &mode) == 0, "Activate screen");
+        changed = true;
     } catch (...) { release(); throw; }
 }
 
@@ -64,6 +72,13 @@ void Display::present(const juce::Image& image) {
 }
 
 void Display::release() {
+    if (fd >= 0 && changed) {
+        if (previous && previous->mode_valid)
+            drmModeSetCrtc(fd, previous->crtc_id, previous->buffer_id, previous->x, previous->y, &connector_id, 1, &previous->mode);
+        else drmModeSetCrtc(fd, active_crtc, 0, 0, 0, nullptr, 0, nullptr);
+    }
+    if (previous) drmModeFreeCrtc(previous);
+    previous = nullptr; changed = false;
     if (pixels && pixels != MAP_FAILED) munmap(pixels, bytes);
     if (framebuffer) drmModeRmFB(fd, framebuffer);
     if (handle) { drm_mode_destroy_dumb destroy {}; destroy.handle = handle; drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy); }

@@ -30,8 +30,10 @@ No sibling checkout is a build dependency.
 The app loads Liberation Sans from the existing target installation. The
 build environment installs the distribution's Liberation font package for
 previews; no fonts are copied from the MPC or included in this repository.
-ALSA, DRM, FreeType and Fontconfig are linked to the platform's libraries.
-inMusic's kernel source release was used as hardware documentation; no
+ALSA, DRM, libsystemd (sd-bus), FreeType and Fontconfig are linked to the
+platform's libraries.
+inMusic's kernel source release and its edisksd source were used as interface
+documentation (pinned source and checksums in `docs/HARDWARE.md`); no
 proprietary stock application code or assets are included.
 
 The synth uses only mathematical oscillators and envelopes written for this

@@ -26,7 +26,7 @@ Description=sample-base standalone JUCE instrument
 Type=exec
 ExecStartPre=/bin/systemctl stop ac50.service
 ExecStart={release}/sample-base
-ExecStopPost=/bin/systemctl start ac50.service
+ExecStopPost=/bin/sh {release}/restore-stock.sh
 Restart=no
 TimeoutStartSec=30
 TimeoutStopSec=10
@@ -55,7 +55,8 @@ class Device:
 
     def stage(self):
         self.check_identity()
-        files = {"sample-base": ROOT / "build/sample-base"}
+        files = {"sample-base": ROOT / "build/sample-base",
+                 "restore-stock.sh": ROOT / "install/restore-stock.sh"}
         for path in files.values():
             if not path.is_file():
                 raise RuntimeError("Build first with ./build.sh")
@@ -137,7 +138,7 @@ def main():
     start.add_argument("--seconds", type=int, default=0, help="automatically return to stock after N seconds")
     commands.add_parser("stock")
     commands.add_parser("status")
-    ctl = commands.add_parser("ctl"); ctl.add_argument("action", choices=("status", "audition", "stock", "screenshot"))
+    ctl = commands.add_parser("ctl"); ctl.add_argument("action", nargs="+", help="running app command and arguments")
     screenshot = commands.add_parser("screenshot"); screenshot.add_argument("output", nargs="?", default=".local/screen.png")
     args = parser.parse_args()
     device = Device(args.host, args.port, args.key)
@@ -148,7 +149,7 @@ def main():
     elif args.command == "status":
         device.status()
     elif args.command == "ctl":
-        device.control(args.action)
+        device.control(" ".join(args.action))
     else:
         device.screenshot(args.output)
 

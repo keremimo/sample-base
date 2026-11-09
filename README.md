@@ -1,6 +1,6 @@
 # sample-base
 
-A small, standalone JUCE application for **MPC Sample AC50 firmware 1.3.0.12**.
+An open-source, standalone JUCE application base for **MPC Sample AC50 firmware 1.3.0.12**.
 It draws its own screen, reads the physical pads and makes simple beeps and
 boops without running or injecting into the stock MPC application.
 
@@ -8,7 +8,11 @@ The proof of concept has 16 velocity-sensitive pads mapped to C major from
 C4 to D6, a 16-voice sine/triangle synth, a pad display and an output meter.
 **Push the wheel to return to the stock app.** The synth has a short attack
 and release and fixed output gain. Presets, knobs, recording, sequencing,
-project storage, external MIDI and USB audio bridging are future work.
+project storage and USB audio bridging are future work. External MIDI now
+plays the demo synth. The reusable base also supplies audio input, mixer and
+jack controls, bidirectional MIDI and hotplug, display/backlight, sync GPIO,
+power telemetry, storage-service integration and session recovery.
+See [docs/HARDWARE.md](docs/HARDWARE.md) for APIs, commands and reference wiring.
 
 ## Build
 
@@ -58,11 +62,13 @@ these. Supply your own SSH key and keep it outside this repository.
 The start command restarts applications, so finish any project edits first;
 there is no additional confirmation prompt.
 
-Start verifies the known stock identity, copies the app into a **new RAM
-directory**, checks its hash, and runs its audio self-test before switching.
+Start verifies the known stock identity, copies the app and recovery script
+into a **new RAM directory**, checks their hashes, and runs its audio self-test
+before switching.
 An independent `sample-base.service` stops `ac50.service` for the session and
 starts it again after **normal exit, wheel Push, remote stop, startup failure,
-or a process crash**. Existing stock/plugin startup configuration is preserved.
+or a process crash**. During system shutdown the recovery script lets systemd
+finish stopping services. Existing stock/plugin startup configuration is preserved.
 The session unit and binaries live under `/run`; reboot uses the previous
 startup configuration. No firmware, stock libraries or SD startup files change.
 
@@ -77,10 +83,13 @@ python3 device.py start --seconds 45
 - **JUCE 9 graphics** draws to a software `juce::Image`. DRM presents the
   image on the existing ST7796S panel driver. X11, a compositor and OpenGL
   are unnecessary. This is an embedded app loop, not a desktop window.
-- **ALSA** owns the I2S output at 44.1 kHz, stereo S32, with 128-frame
-  processing blocks and a 512-frame hardware buffer. Drawing stays on a
-  separate thread from audio; a bounded queue carries MIDI to the synth.
-- **ALSA raw MIDI** reads the control surface directly. Pads send notes
+- **ALSA** owns stereo I2S playback and optional capture at 44.1 kHz, S32,
+  with 128-frame processing blocks and a nominal 512-frame hardware buffer.
+  Rendering, MIDI and service work run separately. Input monitoring starts off.
+  The mixer exposes real controls and validates explicit route changes.
+- **ALSA raw MIDI** discovers and opens the surface, external and USB ports
+  in both directions. Full packets, realtime and SysEx are supported.
+  The control surface is read directly. Pads send notes
   36–51; wheel Push is control 111. Running status, split reads, realtime
   bytes and note-on velocity-zero releases are handled. Queue overflow
   clears pending events and silences voices rather than losing a note-off.
@@ -98,7 +107,7 @@ Existing kernel drivers are used; no kernel rebuild or installation is needed.
 ## Validation and licensing
 
 See [docs/VALIDATION.md](docs/VALIDATION.md) for checked behavior and hardware
-limitations. Run the portable regression tests with:
+limitations. Run the regression tests with:
 
 ```sh
 python3 -m unittest discover -s tests -v
