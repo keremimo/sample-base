@@ -9,8 +9,20 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Twenty-three regression tests pass on Linux ARM64. On macOS, fifteen
-  portable tests pass and eight Linux-specific tests are skipped.
+- Twenty-five regression tests pass on Linux ARM64. On macOS, sixteen
+  portable tests pass and nine Linux-specific tests are skipped. The build
+  also renders the recorder page preview `build/preview-recorder.png`.
+- Recorder fixtures cover L + R / L / R selection, mono microphone mixing,
+  S16_LE, S24_3LE and S32_LE conversion, 44.1/48/32 kHz linear rate
+  conversion, ring priming, underrun re-priming, overflow and flush, takes
+  refused without an input, record/finish/play/stop, playback mixing,
+  route-change and full-buffer endings and stale overview peaks.
+- A fake `UAC2_Gadget` card in front of ALSA's null PCM verifies discovery by
+  driver name, waiting without opening while `Capture Rate` is 0, opening at
+  the host's rate, conversion into the audio ring, reopening on a rate change
+  and closing when the host stops. The headless app test drives `source`,
+  `channels`, `transport`, `page` and `recorder`, including a USB-C selection
+  with no gadget present.
 - Light fixtures cover the measured pad, fader, bank and button messages,
   which buttons accept red, nothing sent before an application sets a light,
   change-only updates and a full or limited queue resuming on the next pass.
@@ -98,7 +110,11 @@ without inventing a battery percentage. Sync output is an explicit level
 interface, not a qualified musical clock generator. USB PCM selection does
 not implement a simultaneous USB/I2S audio bridge or resampler.
 
-Recording, project storage, presets and sequencing remain application work.
+The input recorder has not yet run on the MPC. Line, microphone and USB-C
+levels, the L/R jack assignment, whether 1.3.0.12's USB gadget configuration
+exposes the UAC2 function while sample-base runs, the host's chosen format and
+long-session clock drift all need hardware confirmation. Saving takes,
+project storage, presets and sequencing remain application work.
 The installer remains RAM-only; reboot removes the session setup and uses
 the existing startup configuration. Hardware mixer/backlight restoration is
 best effort on normal exit; crash recovery restores the stock service.

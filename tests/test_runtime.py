@@ -58,6 +58,16 @@ class RuntimeTests(unittest.TestCase):
                                    "-Wl,--wrap=snd_pcm_wait", "-Wl,--wrap=snd_pcm_prepare", "-Wl,--wrap=snd_pcm_start"))
             subprocess.run([str(binary)], check=True, timeout=10)
 
+    def test_usb_gadget_input_discovery_rate_changes_and_conversion(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "usb-audio"
+            symbols = ("snd_card_next", "snd_ctl_open", "snd_ctl_close", "snd_ctl_card_info", "snd_ctl_card_info_get_driver",
+                       "snd_ctl_card_info_get_id", "snd_ctl_elem_read", "snd_pcm_open", "snd_pcm_close", "snd_pcm_wait",
+                       "snd_pcm_readi")
+            compile_fixture(binary, "tests/usb_audio.cpp", "src/usb_audio.cpp", "src/platform.cpp",
+                            extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
+            subprocess.run([str(binary)], check=True, timeout=20)
+
     @unittest.skipUnless((ROOT / "build/sample-base").is_file(), "build application first")
     def test_headless_control_commands_and_clean_shutdown(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -115,6 +125,37 @@ class RuntimeTests(unittest.TestCase):
                     self.assertTrue(command(bad).startswith("ERR"), bad)
                 power = json.loads(command("power")[3:])
                 self.assertEqual((power["key"], power["presses"]), ("KEY_POWER", 0))
+
+                def recorder(until=lambda state: True):
+                    for _ in range(300):
+                        state = json.loads(command("recorder")[3:])
+                        if until(state):
+                            return state
+                        time.sleep(0.01)
+                    self.fail("recorder never reached the expected state: " + json.dumps(state))
+                self.assertIn("source=off channels=stereo recorder=idle", command("status"))
+                self.assertTrue(command("transport record").startswith("OK"))
+                self.assertEqual(recorder(lambda state: state["refused"] == 1)["frames"], 0)
+                for bad in ("source radio", "channels middle", "transport rewind", "page nope", "recorder now", "input usb"):
+                    self.assertTrue(command(bad).startswith("ERR"), bad)
+                self.assertTrue(command("input line").startswith("ERR"))  # No I2S mixer here.
+                self.assertTrue(command("source line").startswith("OK source line"))
+                self.assertTrue(command("channels left").startswith("OK"))
+                self.assertTrue(command("page recorder").startswith("OK"))
+                self.assertTrue(command("transport record").startswith("OK"))
+                recorder(lambda state: state["frames"] > 0)
+                self.assertTrue(command("transport stop").startswith("OK"))
+                take = recorder(lambda state: state["state"] == "idle")
+                self.assertEqual((take["take_source"], take["take_channels"], take["takes"]), ("line", "left", 1))
+                self.assertEqual((take["capacity"], take["rate"]), (60 * 44100, 44100))
+                self.assertTrue(command("transport play").startswith("OK"))
+                recorder(lambda state: state["state"] == "idle")
+                self.assertTrue(command("source usb").startswith("OK"))
+                self.assertEqual(recorder(lambda state: state["usb"]["state"] == "missing")["source"], "usb")
+                self.assertTrue(command("source off").startswith("OK"))
+                self.assertIn("source=off channels=left", command("status"))
+                self.assertIn("usb=stopped", command("status"))
+                self.assertTrue(command("page synth").startswith("OK"))
                 stream = subprocess.run([str(ROOT / "build/sample-base"), "--runtime-dir", str(runtime), "--ctl-stream"],
                                         input="status\nunknown\nsurface-log 0\n", capture_output=True, text=True, timeout=15)
                 replies = stream.stdout.splitlines()

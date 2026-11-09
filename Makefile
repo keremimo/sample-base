@@ -11,7 +11,7 @@ MODULE_C := $(wildcard $(JUCE)/juce_core/*.c $(JUCE)/juce_graphics/*.c)
 OBJECTS := $(addprefix build/obj/,$(notdir $(MODULE_CPP:.cpp=.o) $(MODULE_C:.c=.o))) \
     build/obj/main.o build/obj/display.o build/obj/screen.o build/obj/audio.o \
     build/obj/platform.o build/obj/hardware_midi.o build/obj/mixer.o build/obj/system_services.o build/obj/clock_io.o \
-    build/obj/power_button.o
+    build/obj/power_button.o build/obj/usb_audio.o
 
 all: build/sample-base
 build/sample-base: $(OBJECTS)

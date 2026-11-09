@@ -11,7 +11,9 @@
 #include "mixer.h"
 #include "platform.h"
 #include "power_button.h"
+#include "recorder.h"
 #include "system_services.h"
+#include "usb_audio.h"
 #include <alsa/asoundlib.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -56,10 +58,20 @@ struct Shared {
     std::atomic<float> gain {1}, monitor {0};
     std::atomic<unsigned> midi_send_errors {0};
     std::atomic<bool> push_exit {true};
+    std::atomic<bool> prompting {false}; // A remote tool owns the screen; recorder buttons rest.
     std::mutex prompt_lock; // Control thread writes, screen thread copies.
     std::string prompt;
+    // Input recording showcase. `source` changes only on the service thread,
+    // after the matching hardware route is in place; `channels` and the page
+    // are plain choices any thread may set.
+    static constexpr unsigned recording_seconds = 60;
+    Recorder recorder {recording_seconds * rate};
+    UsbAudioInput usb;
+    std::atomic<uint8_t> source {uint8_t(InputSource::Off)}, channels {uint8_t(InputChannels::Stereo)};
+    std::atomic<float> input_left {0}, input_right {0}; // Decaying peaks of the selected source.
+    std::atomic<bool> recorder_page {false};
 };
-struct RenderContext { Shared& state; Synth& synth; };
+struct RenderContext { Shared& state; Synth& synth; float meter_left = 0, meter_right = 0; };
 void render_audio(void* pointer, const AudioBlock& input, AudioBlock& output) {
     auto& context = *static_cast<RenderContext*>(pointer);
     auto& state = context.state;
@@ -70,9 +82,26 @@ void render_audio(void* pointer, const AudioBlock& input, AudioBlock& output) {
     }
     for (unsigned n = 0; n < 256 && state.queue.pop(event); ++n) context.synth.midi(event);
     context.synth.render(output.data());
+
+    auto source = InputSource(state.source.load(std::memory_order_relaxed));
+    auto channels = InputChannels(state.channels.load(std::memory_order_relaxed));
+    std::array<float, block * 2> recorded {}, playback {};
+    if (source == InputSource::Usb) state.usb.pull(recorded.data(), block);
+    else if (source != InputSource::Off) for (unsigned i = 0; i < recorded.size(); ++i) recorded[i] = float(input[i] / 2147483648.0);
+    // About 20 dB per 300 ms of fall, so the 75 ms screen refresh sees peaks.
+    context.meter_left *= 0.978f; context.meter_right *= 0.978f;
+    for (unsigned n = 0; n < block; ++n) {
+        context.meter_left = std::max(context.meter_left, std::abs(recorded[2 * n]));
+        context.meter_right = std::max(context.meter_right, std::abs(recorded[2 * n + 1]));
+    }
+    state.input_left.store(context.meter_left, std::memory_order_relaxed);
+    state.input_right.store(context.meter_right, std::memory_order_relaxed);
+    select_input_channels(source, channels, recorded.data(), block);
+    state.recorder.process(recorded.data(), playback.data(), block, input_route(source, channels), source != InputSource::Off);
+
     float gain = state.gain.load(), monitor = state.monitor.load();
     for (unsigned i = 0; i < output.size(); ++i) {
-        double sample = (output[i] / 2147483648.0 + input[i] / 2147483648.0 * monitor) * gain;
+        double sample = (output[i] / 2147483648.0 + playback[i] + input[i] / 2147483648.0 * monitor) * gain;
         output[i] = int32_t(std::clamp(sample, -0.99, 0.99) * 2147483647.0);
     }
 }
@@ -83,16 +112,35 @@ template <class Integer> bool unsigned_value(const std::string& text, Integer& v
 }
 
 std::string status(const Shared& state) {
-    char reply[1024];
+    char reply[1536];
     snprintf(reply, sizeof(reply), "OK frames=%llu sounding_blocks=%llu hardware_events=%u external_events=%u synthetic_events=%u "
              "held=%04x last_pad=%d velocity=%d last_midi=%06x peak=%.6f input_peak=%.6f capture_frames=%llu capture_active=%u "
-             "xruns=%u capture_xruns=%u queue_overruns=%u clocks=%u gain=%.2f monitor=%.2f push_exit=%u",
+             "xruns=%u capture_xruns=%u queue_overruns=%u clocks=%u gain=%.2f monitor=%.2f push_exit=%u "
+             "source=%s channels=%s recorder=%s recorded_frames=%u play_frame=%u takes=%u usb=%s",
              static_cast<unsigned long long>(state.audio.frames.load()), static_cast<unsigned long long>(state.audio.sounding_blocks.load()),
              state.hardware_events.load(), state.external_events.load(), state.synthetic_events.load(), state.held.load(), state.last_pad.load() + 1,
              state.velocity.load(), state.last_midi.load(), double(state.audio.peak.load()), double(state.audio.input_peak.load()),
              static_cast<unsigned long long>(state.audio.capture_frames.load()), unsigned(state.audio.capture_active.load()),
-             state.audio.xruns.load(), state.audio.capture_xruns.load(), state.overruns.load(), state.clocks.load(), double(state.gain.load()), double(state.monitor.load()), unsigned(state.push_exit.load()));
+             state.audio.xruns.load(), state.audio.capture_xruns.load(), state.overruns.load(), state.clocks.load(), double(state.gain.load()), double(state.monitor.load()), unsigned(state.push_exit.load()),
+             input_source_names[state.source.load()], input_channel_names[state.channels.load()],
+             Recorder::state_names[size_t(state.recorder.state())], state.recorder.length(), state.recorder.position(),
+             state.recorder.takes(), usb_input_state_names[size_t(state.usb.state())]);
     return reply;
+}
+std::string recorder_json(const Shared& state) {
+    auto& recorder = state.recorder;
+    unsigned route = recorder.route();
+    std::ostringstream out;
+    out << "{\"source\":" << json_string(input_source_names[state.source.load()])
+        << ",\"channels\":" << json_string(input_channel_names[state.channels.load()])
+        << ",\"state\":" << json_string(Recorder::state_names[size_t(recorder.state())])
+        << ",\"rate\":" << rate << ",\"frames\":" << recorder.length() << ",\"position\":" << recorder.position()
+        << ",\"capacity\":" << recorder.capacity() << ",\"takes\":" << recorder.takes() << ",\"refused\":" << recorder.refused()
+        << ",\"take_source\":" << json_string(recorder.takes() ? input_source_names[(route >> 4) % input_source_names.size()] : "")
+        << ",\"take_channels\":" << json_string(recorder.takes() ? input_channel_names[(route & 15) % input_channel_names.size()] : "")
+        << ",\"input_peaks\":[" << state.input_left.load() << ',' << state.input_right.load() << ']'
+        << ",\"usb\":" << state.usb.json() << '}';
+    return out.str();
 }
 std::string surface_json(const SurfaceState& state) {
     std::ostringstream out; out << "{\"timestamp_ns\":" << state.last.timestamp_ns << ",\"pitch\":" << state.pitch << ",\"channel_pressure\":" << unsigned(state.channel_pressure);
@@ -126,7 +174,8 @@ struct MidiSendRequest { std::array<char, 64> address {}; MidiPacket packet; };
 struct MidiCatalog { std::string json; std::vector<std::string> outputs; };
 class Controller {
 public:
-    Controller(const std::string& runtime, bool required) : socket_path(runtime + "/control.sock"), surface_required(required) {
+    Controller(const std::string& runtime, bool required, const std::string& usb)
+        : socket_path(runtime + "/control.sock"), surface_required(required), usb_device(usb) {
         catalog = {midi.json(), midi.outputs()};
         require(!required || midi.has_surface(), "Control surface unavailable; use --no-surface only for a headless/host test");
         require(socket_path.size() < sizeof(sockaddr_un::sun_path), "Runtime path is too long");
@@ -159,6 +208,8 @@ public:
                 MidiCatalog update;
                 while (catalog_updates.pop(update)) catalog = std::move(update);
                 clock.poll(); services.poll();
+                int requested = source_request.exchange(-1);
+                if (requested >= 0) select_source(state, InputSource(requested));
                 if (power.poll()) state.last_input.store(pack_last_input(InputKind::Power, 0, power.pressed()));
                 if (services.stopping()) state.running.store(false);
                 pollfd ready {fd, POLLIN, 0};
@@ -208,6 +259,7 @@ private:
                             bool moved = input.kind == SurfaceInput::Kind::Control &&
                                 (is_control(input, SurfaceControl::Wheel) ? input.delta != 0 : std::chrono::steady_clock::now() >= syncing_until);
                             if (moved || input.pressed) state.last_input.store(pack_last_input(input));
+                            if (input.pressed && input.kind == SurfaceInput::Kind::Button && !state.prompting.load()) recorder_button(state, SurfaceButton(input.index));
                             route(state, event);
                         }
                     } else {
@@ -233,6 +285,7 @@ private:
                 MidiSendRequest request;
                 for (unsigned n = 0; n < 32 && midi_output.pop(request); ++n)
                     if (!midi.send(request.address.data(), request.packet)) ++state.midi_send_errors;
+                recorder_lights(state);
                 lights.update([&](const MidiPacket& packet) { return midi.send_surface(packet); }, 48);
                 midi.flush();
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -275,6 +328,7 @@ private:
             if (argument.size() > 400 || std::any_of(argument.begin(), argument.end(), [](char c) { return static_cast<unsigned char>(c) < 0x20; }))
                 return "ERR prompt must be printable text up to 400 bytes";
             std::lock_guard<std::mutex> lock(state.prompt_lock); state.prompt = argument;
+            state.prompting.store(!argument.empty());
             return argument.empty() ? "OK prompt cleared" : "OK prompt shown";
         }
         if (action == "midi" && argument.empty()) return "OK {\"async_send_errors\":" + std::to_string(state.midi_send_errors.load()) + ",\"state\":" + catalog.json + '}';
@@ -282,7 +336,32 @@ private:
         if (action == "storage" && argument.empty()) return "OK {\"generation\":" + std::to_string(services.storage_generation()) + ",\"state\":" + services.storage_json() + '}';
         if (action == "hardware" && argument.empty()) return "OK {\"platform\":" + platform.json() + ",\"midi\":" + catalog.json +
             ",\"mixer\":" + mixer.json() + ",\"audio\":" + AudioDevice::devices_json() + '}';
-        if (action == "input") return mixer.input(argument) ? "OK input " + argument : "ERR input unavailable; use off, mic or line";
+        if (action == "input") {
+            auto source = argument == "off" ? InputSource::Off : argument == "mic" ? InputSource::Mic : argument == "line" ? InputSource::Line : InputSource::Count;
+            return mixer.available() && source != InputSource::Count && select_source(state, source) ? "OK input " + argument : "ERR input unavailable; use off, mic or line";
+        }
+        if (action == "source") {
+            auto name = std::find(input_source_names.begin(), input_source_names.end(), argument);
+            if (name == input_source_names.end()) return "ERR use source off, line, mic or usb";
+            if (!select_source(state, InputSource(name - input_source_names.begin()))) return "ERR input route unavailable; input is off";
+            return "OK source " + argument + (mixer.available() ? "" : " (no I2S mixer; route unchanged)");
+        }
+        if (action == "channels") {
+            auto name = std::find(input_channel_names.begin(), input_channel_names.end(), argument);
+            if (name == input_channel_names.end()) return "ERR use channels stereo, left or right";
+            state.channels.store(uint8_t(name - input_channel_names.begin())); return "OK channels " + argument;
+        }
+        if (action == "transport") {
+            if (argument == "record") state.recorder.record();
+            else if (argument == "play") state.recorder.play();
+            else if (argument == "stop") state.recorder.stop();
+            else return "ERR use transport record, play or stop";
+            return "OK transport " + argument + " requested";
+        }
+        if (action == "page" && (argument == "synth" || argument == "recorder")) {
+            state.recorder_page.store(argument == "recorder"); return "OK page " + argument;
+        }
+        if (action == "recorder" && argument.empty()) return "OK " + recorder_json(state);
         if (action == "storage-mount" || action == "storage-unmount")
             return services.mount(argument, action == "storage-mount") ? "OK storage request completed" : "ERR storage service request failed";
         unsigned value = 0;
@@ -307,7 +386,63 @@ private:
             if (!fields.eof()) return "ERR invalid mixer values";
             return unsigned_value(id, value) && mixer.set(value, values) ? "OK mixer updated" : "ERR unavailable control, wrong value count or range";
         }
-        return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, led, midi, midi-send, mixer, mixer-set, input, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
+        return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, led, midi, midi-send, mixer, mixer-set, input, "
+               "source, channels, transport, page, recorder, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
+    }
+    // Service thread only. Recording stops before any route changes, and the
+    // new source is published only once its route is in place. Without the
+    // I2S mixer (a host test or another --audio-input) routes are left alone.
+    bool select_source(Shared& state, InputSource source) {
+        state.source.store(uint8_t(InputSource::Off));
+        if (source != InputSource::Usb) state.usb.stop();
+        if (mixer.available()) {
+            const char* profile = source == InputSource::Line ? "line" : source == InputSource::Mic ? "mic" : "off";
+            if (!mixer.input(profile)) { mixer.input("off"); return false; }
+        }
+        if (source == InputSource::Usb && state.usb.state() == UsbInputState::Stopped) state.usb.start(usb_device);
+        state.source.store(uint8_t(source));
+        return true;
+    }
+    // MIDI thread. The buttons above the screen are soft keys for the labels
+    // drawn under them, so on the synth page they only open the recorder.
+    void recorder_button(Shared& state, SurfaceButton button) {
+        bool page = state.recorder_page.load();
+        switch (button) {
+        case SurfaceButton::Sample: state.recorder_page.store(!page); break;
+        case SurfaceButton::TopLeft: {
+            if (page) {
+                int pending = source_request.load();
+                auto current = pending >= 0 ? InputSource(pending) : InputSource(state.source.load());
+                source_request.store(int(next_input_source(current)));
+            }
+            state.recorder_page.store(true); break;
+        }
+        case SurfaceButton::TopMiddle:
+            if (page && input_has_channels(InputSource(state.source.load())))
+                state.channels.store(uint8_t(next_input_channels(InputChannels(state.channels.load()))));
+            state.recorder_page.store(true); break;
+        case SurfaceButton::TopRight: state.recorder_page.store(!page); break;
+        case SurfaceButton::SampleRecord: state.recorder.record(); state.recorder_page.store(true); break;
+        case SurfaceButton::Play: state.recorder.play(); state.recorder_page.store(true); break;
+        case SurfaceButton::Stop: state.recorder.stop(); break;
+        default: break;
+        }
+    }
+    // MIDI thread. Sets the transport lights when the recorder's state calls
+    // for a different light, so a manual `led` command stays until then.
+    void recorder_lights(Shared& state) {
+        auto mode = state.recorder.state();
+        bool recording = mode == Recorder::State::Recording, playing = mode == Recorder::State::Playing;
+        bool source = state.source.load() != uint8_t(InputSource::Off);
+        const std::array<std::pair<SurfaceButton, ButtonLight>, 4> wanted {{
+            {SurfaceButton::Sample, state.recorder_page.load() ? ButtonLight::Bright : ButtonLight::Off},
+            {SurfaceButton::SampleRecord, recording ? ButtonLight::Bright : source ? ButtonLight::Dim : ButtonLight::Off},
+            {SurfaceButton::Play, playing ? ButtonLight::Bright : state.recorder.length() ? ButtonLight::Dim : ButtonLight::Off},
+            {SurfaceButton::Stop, recording || playing ? ButtonLight::Dim : ButtonLight::Off},
+        }};
+        for (unsigned n = 0; n < wanted.size(); ++n)
+            if (shown_lights[n] != uint8_t(wanted[n].second) && lights.button(wanted[n].first, wanted[n].second))
+                shown_lights[n] = uint8_t(wanted[n].second);
     }
     // led pad 1-16 R G B | led fader R G B | led bank A-H on|off |
     // led button NAME off|dim|bright|red-dim|red-bright | led off
@@ -357,6 +492,9 @@ private:
     }
     std::string socket_path;
     bool surface_required;
+    std::string usb_device;
+    std::atomic<int> source_request {-1}; // MIDI thread asks, service thread applies.
+    std::array<uint8_t, 4> shown_lights {{0xff, 0xff, 0xff, 0xff}};
     int fd = -1;
     HardwareMidi midi;
     HardwareMixer mixer;
@@ -425,6 +563,57 @@ int control_stream(const std::string& runtime) {
     return 0;
 }
 
+std::string source_detail(const Shared& state, InputSource source) {
+    bool capture = state.audio.capture_active.load();
+    switch (source) {
+    case InputSource::Line: return capture ? "Line inputs L and R" : "Audio capture is unavailable";
+    case InputSource::Mic: return capture ? "Built-in microphone, recorded mono" : "Audio capture is unavailable";
+    case InputSource::Usb: break;
+    default: return "The left button above the screen chooses an input";
+    }
+    switch (state.usb.state()) {
+    case UsbInputState::Missing: return "No USB audio gadget card was found";
+    case UsbInputState::Waiting: return "USB-C: play audio from the computer";
+    case UsbInputState::Failed: return "USB-C audio could not be opened";
+    case UsbInputState::Running: {
+        char text[96];
+        snprintf(text, sizeof(text), "USB-C: %.1f kHz, %u-bit, %u ch%s", state.usb.rate() / 1000.0, state.usb.bits(),
+                 state.usb.channels(), state.usb.rate() == rate ? "" : ", converted to 44.1 kHz");
+        return text;
+    }
+    default: return "USB-C input is starting";
+    }
+}
+RecorderView recorder_view(const Shared& state) {
+    RecorderView view;
+    const auto& recorder = state.recorder;
+    view.source = state.source.load(); view.channels = state.channels.load(); view.state = uint8_t(recorder.state());
+    view.frames = recorder.length(); view.position = recorder.position(); view.capacity = recorder.capacity(); view.rate = rate;
+    view.left = state.input_left.load(); view.right = state.input_right.load();
+    // While recording the waveform spans at least ten seconds, so it grows.
+    view.scale = view.state == uint8_t(Recorder::State::Recording) ? std::max(view.frames, 10 * rate) : std::max(view.frames, 1u);
+    for (unsigned column = 0; column < RecorderView::columns; ++column) {
+        unsigned first = unsigned(uint64_t(column) * view.scale / RecorderView::columns);
+        unsigned last = unsigned(uint64_t(column + 1) * view.scale / RecorderView::columns);
+        view.waveform[column] = recorder.overview_peak(first, std::max(last, first + 1));
+    }
+    view.detail = source_detail(state, InputSource(view.source));
+    return view;
+}
+// A few seconds of a decaying drum-like take, for the offline screen preview.
+RecorderView preview_recorder() {
+    RecorderView view;
+    view.source = uint8_t(InputSource::Line); view.channels = uint8_t(InputChannels::Stereo);
+    view.state = uint8_t(Recorder::State::Playing);
+    view.frames = view.scale = 286650; view.position = 101430; view.capacity = 60 * rate;
+    view.left = 0.42f; view.right = 0.18f; view.detail = "Line inputs L and R";
+    for (unsigned column = 0; column < RecorderView::columns; ++column) {
+        double beat = std::fmod(column / 37.0, 1.0), envelope = std::exp(-beat * 5.0);
+        view.waveform[column] = uint8_t(std::clamp(220.0 * envelope * (0.75 + 0.25 * std::sin(column * 1.7)) + 6, 0.0, 255.0));
+    }
+    return view;
+}
+
 void save_png(const juce::Image& image, const std::string& path) {
     juce::FileOutputStream output {juce::File(path)};
     require(output.openedOk() && output.setPosition(0) && output.truncate().wasOk() &&
@@ -476,7 +665,12 @@ int main(int argc, char** argv) {
             if (argc == 4) state.prompt = argv[3];
             save_png(screen.draw(state), argv[2]); return 0;
         }
-        std::string output = "hw:I2S,0", input = "hw:I2S,0", runtime = "/run/sample-base";
+        if (argc == 3 && !strcmp(argv[1], "--preview-recorder")) {
+            Screen screen(font); ScreenState state; state.recorder_page = true; state.recorder = preview_recorder();
+            state.last_input = surface_buttons[size_t(SurfaceButton::Play)].name;
+            save_png(screen.draw(state), argv[2]); return 0;
+        }
+        std::string output = "hw:I2S,0", input = "hw:I2S,0", runtime = "/run/sample-base", usb_input = "auto";
         bool headless = false, surface_required = true; unsigned seconds = 0;
         for (int i = 1; i < argc; ++i) {
             std::string option = argv[i];
@@ -507,6 +701,7 @@ int main(int argc, char** argv) {
                 std::string value = argv[++i];
                 if (option == "--audio-output") output = value;
                 else if (option == "--audio-input") input = value;
+                else if (option == "--usb-input") usb_input = value;
                 else if (option == "--runtime-dir") runtime = value;
                 else if (option == "--seconds") require(unsigned_value(value, seconds) && seconds <= 86400, "Invalid session duration");
                 else throw std::runtime_error("Unknown option: " + option);
@@ -516,7 +711,7 @@ int main(int argc, char** argv) {
         Synth engine;
         std::unique_ptr<Screen> screen; std::unique_ptr<Display> display;
         if (!headless) { screen = std::make_unique<Screen>(font); display = std::make_unique<Display>(); }
-        AudioDevice audio(output, input); Controller controller(runtime, surface_required);
+        AudioDevice audio(output, input); Controller controller(runtime, surface_required, usb_input);
         Shared state; RenderContext context {state, engine};
         auto deadline = seconds ? std::chrono::steady_clock::now() + std::chrono::seconds(seconds) : std::chrono::steady_clock::time_point::max();
         std::thread audio_thread, control_thread;
@@ -524,10 +719,16 @@ int main(int argc, char** argv) {
             audio_thread = std::thread([&] { audio.run(state.running, state.failed, state.audio, render_audio, &context); });
             control_thread = std::thread([&] { controller.run(state); });
             std::cout << "READY sample-base JUCE " << JUCE_MAJOR_VERSION << '.' << JUCE_MINOR_VERSION << '.' << JUCE_BUILDNUMBER << std::endl;
+            unsigned refusals_seen = 0;
+            auto hint_until = std::chrono::steady_clock::time_point::min();
             while (state.running.load() && !interrupted && std::chrono::steady_clock::now() < deadline) {
                 if (screen && display) {
-                    ScreenState view {state.held.load(), state.last_pad.load(), state.velocity.load(), state.audio.peak.load(), state.audio.xruns.load(), {}, describe_last_input(state.last_input.load())};
+                    ScreenState view {state.held.load(), state.last_pad.load(), state.velocity.load(), state.audio.peak.load(), state.audio.xruns.load(), {}, describe_last_input(state.last_input.load()), state.recorder_page.load(), {}};
                     { std::lock_guard<std::mutex> lock(state.prompt_lock); view.prompt = state.prompt; }
+                    if (view.recorder_page) view.recorder = recorder_view(state);
+                    auto now = std::chrono::steady_clock::now();
+                    if (state.recorder.refused() != refusals_seen) { refusals_seen = state.recorder.refused(); hint_until = now + std::chrono::milliseconds(2500); }
+                    if (now < hint_until) { view.recorder.detail = "Choose an input first: left button above the screen"; view.recorder.hint = true; }
                     auto image = screen->draw(view);
                     display->present(image);
                     if (state.screenshot.exchange(false)) save_png(image, runtime + "/screen.png");

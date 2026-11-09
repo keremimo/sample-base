@@ -45,7 +45,7 @@ The kernel sources remain under their own upstream licences.
 | Surface inputs and outputs | UART3, 4,000,000 baud, `Control Surface` raw MIDI | `HardwareMidi` receives all channel, pressure, system-common, realtime and bounded SysEx messages; queues complete outbound messages |
 | External MIDI | UART5, 31,250 baud, `External MIDI` raw MIDI | The same discovered bidirectional MIDI interface; incoming channel messages play the demo synth at their native MIDI pitches |
 | USB host MIDI | Kernel USB audio/MIDI driver | Input/output subdevices are discovered and reopened after hotplug; disconnect and read failure panic the demo synth |
-| USB audio | Kernel ALSA PCM devices | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; no fixed USB card number is assumed |
+| USB audio | Kernel ALSA PCM devices; USB-C device audio from the `UAC2_Gadget` card (`CONFIG_USB_CONFIGFS_F_UAC2`) | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; `UsbAudioInput` finds the gadget by driver name, waits for the host and delivers its capture stream at 44.1 kHz; no fixed USB card number is assumed |
 | Display | SPI3 ST7796S-compatible panel, 320 × 240, rotation 270 | `Display` finds the connected panel across DRM cards, presents JUCE software images and attempts to restore the previous CRTC on release |
 | Backlight | PWM4, seven brightness indices, maximum index 6 | `Platform` discovers the actual sysfs range, validates explicit changes and restores its original brightness on normal exit |
 | Power | `mains-power`, ADC supply voltage, kernel power handling | `Platform` reads actual power-supply attributes; `SystemServices` observes logind sleep/shutdown notifications and requests a clean app exit |
@@ -154,7 +154,91 @@ scheduler, and output timing/electrical routing requires hardware validation.
 base currently requires native 44.1 kHz, stereo S32, 128-frame periods and
 at least two periods of buffering. Unsupported playback settings fail
 explicitly; optional capture failure is reported by `capture_active=0`.
-There is no implicit resampling or simultaneous USB/I2S audio bridge.
+There is no implicit resampling or simultaneous USB/I2S audio bridge; the
+recorder's USB-C input is a separate capture stream, described above.
+
+## Input recording showcase
+
+The demo's recorder page (the **Sample** button) records one take of up to
+60 seconds from a chosen input and plays it back. Sources come from public
+wiring, not measurement:
+
+| Input | Public wiring | How sample-base reads it |
+| --- | --- | --- |
+| Line in L / R | DAPM widget `TRS` → `Line Input` amplifier → AK4558 `LIN` / `RIN` | I2S capture channels 0 and 1 with `input line` routing |
+| Built-in microphone | DAPM widget `Builtin Microphone` → `Internal Mic` amplifier → both `LIN` and `RIN` | I2S capture with `input mic` routing, averaged to mono |
+| USB-C | `f_uac2` gadget function; card driver and short name `UAC2_Gadget`, PCM `UAC2 PCM` | The gadget's capture PCM, which carries what the computer plays |
+
+The line and microphone routes share one ADC pair, so only one is enabled at
+a time, through the existing exclusive `input` profile. The microphone feeds
+both ADC inputs from one widget and is recorded as their average. Line in and
+USB-C can record L + R, L only or R only; one chosen channel is copied to both
+sides so it plays back centred.
+
+The gadget facts come from the kernel's `drivers/usb/gadget/function/u_audio.c`
+and `f_uac2.c` (fetched by `tools/hardware_reference.py`). The capture PCM
+offers exactly one sample format, S16_LE, S24_3LE or S32_LE, set by the gadget's
+`c_ssize`, and exactly the channel count of `c_chmask`. Its rate is the rate
+the host chose; the PCM-interface control `Capture Rate` reports it and reads 0
+while the host is not streaming. `UsbAudioInput` therefore opens nothing until
+that control is non-zero, reopens when it changes, closes when it returns to 0,
+and converts the first two channels to 44.1 kHz stereo float with linear
+interpolation on its own thread. An 8,192-frame lock-free ring hands the result
+to the audio thread, which waits for 1,024 frames before using it and again
+after running dry. The host and the AK4558 have independent clocks; the ring
+absorbs drift, and a long session may hear an occasional re-prime. The
+gadget's `Capture Pitch 1000000` feedback control is left alone. Whether the
+1.3.0.12 gadget configuration includes the UAC2 function at all is not in the
+public source; without the card the screen says so and USB-C records silence.
+`--usb-input NAME` reads another ALSA capture PCM instead of discovering the
+gadget.
+
+Nothing changes until an input is chosen: the routes start off, as before,
+and the USB PCM is opened only while USB-C is selected. A recording ends when
+its input or channel choice changes, and the route switches only after the
+recorder has stopped writing. Recording and playback run inside the audio
+callback with no allocation, locking or file I/O; the take lives in RAM and is
+not saved. Playback is mixed before the main volume gain.
+
+Controls on the recorder page:
+
+| Control | Action |
+| --- | --- |
+| Sample | Shows or hides the recorder page |
+| Left button above the screen | Input: Line in → Mic → USB-C → Off |
+| Middle button above the screen | Channels for Line in and USB-C: L + R → L → R |
+| Right button above the screen | Back to the synth page |
+| Sample Record | Starts a take, or finishes the one in progress |
+| Play | Plays the take from the start; ends a take in progress |
+| Stop | Stops recording or playback |
+
+On the synth page the buttons above the screen only open the recorder, since
+their labels are not shown. While a remote `prompt` owns the screen (for
+example during `capture_controls.py`) the recorder ignores buttons. The demo
+sets the Sample, Sample Record, Play and Stop lights at startup and again
+whenever the recorder calls for a different light: Sample Record is dim when
+an input is chosen and bright while recording, Play dim with a take and
+bright while playing, Stop dim while either is running.
+
+The same functions are available remotely:
+
+```sh
+python3 device.py ctl source line
+python3 device.py ctl channels left
+python3 device.py ctl transport record
+python3 device.py ctl transport stop
+python3 device.py ctl transport play
+python3 device.py ctl recorder
+python3 device.py ctl page recorder
+```
+
+`source off|line|mic|usb` applies the route and starts or stops USB input;
+`input off|mic|line` now selects the same source. `channels stereo|left|right`,
+`transport record|play|stop` and `page synth|recorder` mirror the buttons.
+`recorder` returns JSON with the source, channels, state, take length,
+position, capacity, input peaks and USB stream details (state, device, rate,
+channels, bits, ring overflows and underruns). `status` also reports `source`,
+`channels`, `recorder`, `recorded_frames`, `play_frame`, `takes` and `usb`.
 
 ## Deliberate hardware boundaries
 
@@ -245,7 +329,8 @@ so the base does not send them.
 `SurfaceLights` keeps the requested state, which any thread may change, and
 the MIDI thread sends only the lights that changed, at most 48 messages per
 5 ms pass. Nothing is sent for a light the application has never set, so
-startup leaves the stock app's last lights in place. The control commands
+startup leaves the stock app's last lights in place, apart from the four
+transport lights the demo's recorder sets. The control commands
 are `led pad 1-16 R G B`, `led fader R G B`, `led bank A-H on|off`,
 `led button NAME off|dim|bright|red-dim|red-bright` (names as in
 `src/controls.h`, ignoring case and punctuation, so `tap-tempo` or `TapTempo`)

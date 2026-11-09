@@ -8,9 +8,19 @@ The proof of concept has 16 velocity-sensitive pads mapped to C major from
 C4 to D6, a 16-voice sine/triangle synth, a pad display and an output meter.
 **Push the wheel to return to the stock app.** The main volume knob sets the
 synth's output level from its actual position at startup, and the screen
-names the last button, knob or power press. The synth has a short attack and release. Presets, recording, sequencing,
-project storage and USB audio bridging are future work. External MIDI now
-plays the demo synth. The reusable base also supplies audio input, mixer and
+names the last button, knob or power press. The synth has a short attack and release.
+External MIDI now plays the demo synth.
+
+**Input recording showcase.** Press **Sample** for the recorder page. The
+three buttons above the screen are its soft keys: the left one steps the
+input through Line in, Mic, USB-C and Off; the middle one picks L + R, L or
+R for the line inputs and USB-C (the microphone is always mono); the right
+one returns to the synth. **Sample Record** starts and finishes a take of up
+to 60 seconds, **Play** plays it from the start (also ending a take in
+progress) and **Stop** stops either. The screen shows L/R input meters, the
+take's waveform and the playhead, and the transport buttons light up.
+Inputs stay untouched until one is chosen. Presets, sequencing, project
+storage, saving takes and a USB audio output bridge are future work. The reusable base also supplies audio input, mixer and
 jack controls, bidirectional MIDI and hotplug, pad/button/bank lights,
 display/backlight, sync GPIO,
 power telemetry, storage-service integration and session recovery.
@@ -28,8 +38,9 @@ cd sample-base
 
 This builds Linux ARM64 binaries in a Debian container, runs the tests,
 renders a note and its release into `build/test.wav`, and creates
-`build/preview.png`. The complete app is `build/sample-base`; no sound module,
-factory-preset bank or sibling checkout is needed.
+`build/preview.png` and `build/preview-recorder.png`. The complete app is
+`build/sample-base`; no sound module, factory-preset bank or sibling checkout
+is needed.
 
 The build downloads [JUCE 9.0.5](https://github.com/juce-framework/JUCE/releases/tag/9.0.5),
 pinned to revision `d60b7a78030661574a615b586d9325ba7a7fa7dd`, into ignored
@@ -42,9 +53,10 @@ The offline app checks are:
 ```sh
 build/sample-base --self-test build/test.wav
 build/sample-base --preview build/preview.png
+build/sample-base --preview-recorder build/preview-recorder.png
 ```
 
-Neither offline mode opens the MPC's audio, display or control surface.
+No offline mode opens the MPC's audio, display or control surface.
 
 ## Run on the MPC
 
@@ -101,6 +113,13 @@ python3 device.py start --seconds 45
 - **Built-in synth** mixes sine and triangle oscillators with velocity and
   5 ms attack / 80 ms release envelopes. Sixteen fixed voice slots keep
   rendering bounded, with no allocations, locks or file I/O.
+- **Input recorder** ([src/recorder.h](src/recorder.h)) keeps one
+  preallocated 60-second stereo take in RAM and runs inside the audio
+  callback. Line in and Mic come from the I2S capture pair through the
+  existing exclusive `TRS` / `Builtin Microphone` route switch. USB-C input
+  ([src/usb_audio.cpp](src/usb_audio.cpp)) reads the kernel's UAC2 gadget
+  capture PCM on its own thread, converts the host's rate to 44.1 kHz and
+  crosses into the audio thread through a lock-free ring.
 - Fonts come from the MPC's existing Liberation Sans installation.
 
 The hardware reference is inMusic's

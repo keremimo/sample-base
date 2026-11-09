@@ -26,6 +26,9 @@ LINUX_FILES = (
     "sound/soc/codecs/simple-amplifier.c", "sound/soc/codecs/simple-mute.c",
     "sound/soc/generic/simple-card-utils.c", "drivers/gpu/drm/tiny/st7796s.c",
     "drivers/power/supply/generic-adc-mains.c", "drivers/input/misc/rk805-pwrkey.c",
+    "drivers/usb/gadget/function/f_uac2.c", "drivers/usb/gadget/function/u_audio.c",
+    "drivers/usb/gadget/function/u_audio.h", "drivers/usb/gadget/function/u_uac2.h",
+    "drivers/usb/gadget/function/uac_common.h",
 )
 
 
