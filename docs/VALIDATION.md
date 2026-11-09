@@ -47,18 +47,23 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
 
 ## Hardware status and boundaries
 
-This version has **not** been installed or tested on the MPC. No connected
-MPC operations were performed during this work. Source references, mocked
-interfaces and software PCM tests establish offline behavior; they do not
-qualify electrical routing, latency, sound or device interoperability.
+The hardware-base build was installed in RAM and started successfully on the
+MPC. Playback and capture were active with zero reported underruns at startup.
+The owner found that the original sequential pad-order assumption was wrong.
+A live capture of pads 1–16 in printed-number order established the explicit
+channel-10 map now recorded in `src/pads.h`; raw captures remain ignored.
+The corrected note order still needs the owner's physical confirmation after
+installation. Source references and offline tests do not qualify every
+electrical route, latency, sound or device interoperability.
 
 Physical pad/knob/button response, LED protocols, listening, microphone/line
 selection, headphone/speaker behavior, USB and TRS MIDI, USB PCM formats,
 backlight changes, sync jacks, storage removal, suspend/resume, wheel return,
 crash restoration and sustained full-polyphony/underrun behavior require
-hardware confirmation. The known demo pad and wheel map comes from the
-initial proof of concept; the public reference establishes the underlying
-transports, not the complete surface microcontroller protocol.
+hardware confirmation. The pad map is now measured; wheel Push behavior comes
+from the initial
+proof of concept. The public reference establishes the underlying transports,
+not the complete surface microcontroller protocol.
 
 The base supplies raw surface output but does not invent LED colour,
 calibration or battery commands. It reports available supply telemetry

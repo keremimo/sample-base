@@ -37,7 +37,6 @@
 
 namespace {
 constexpr unsigned rate = Synth::sample_rate, block = Synth::block_size;
-constexpr int scale[] = {60,62,64,65,67,69,71,72,74,76,77,79,81,83,84,86};
 volatile std::sig_atomic_t interrupted = 0;
 void signal_handler(int) { interrupted = 1; }
 void require(bool ok, const std::string& message) { if (!ok) throw std::runtime_error(message); }
@@ -187,10 +186,10 @@ private:
                     scan = now + std::chrono::seconds(1);
                 }
                 if (audition_requested.exchange(false)) {
-                    route(state, {0x90,36,100}); ++state.synthetic_events;
+                    route(state, {0x99,surface_pad_notes[0],100}); ++state.synthetic_events;
                     release = now + std::chrono::milliseconds(300);
                 }
-                if (now >= release) { route(state, {0x80,36,0}); ++state.synthetic_events; release = std::chrono::steady_clock::time_point::max(); }
+                if (now >= release) { route(state, {0x89,surface_pad_notes[0],0}); ++state.synthetic_events; release = std::chrono::steady_clock::time_point::max(); }
                 MidiSendRequest request;
                 for (unsigned n = 0; n < 32 && midi_output.pop(request); ++n)
                     if (!midi.send(request.address.data(), request.packet)) ++state.midi_send_errors;
@@ -256,7 +255,7 @@ private:
         bool down = kind == 0x90 && event.value != 0;
         if (down) { state.held.fetch_or(1u << pad); state.last_pad.store(pad); state.velocity.store(event.value); }
         else state.held.fetch_and(~(1u << pad));
-        state.queue.push({uint8_t(down ? 0x90 : 0x80), uint8_t(scale[pad]), down ? event.value : uint8_t(0)});
+        state.queue.push({uint8_t(down ? 0x90 : 0x80), pad_scale_notes[pad], down ? event.value : uint8_t(0)});
     }
     std::string socket_path;
     bool surface_required;

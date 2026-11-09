@@ -19,7 +19,18 @@ int main() {
     feed({0xc0,4,5,0xd0,72,0xb0,111,127});
     assert(got.size() == 7 && got[3].key == 4 && got[4].key == 5 && got[5].status == 0xd0);
     assert(got[6].key == 111);
-    assert(pad_index({0x99,36,100}) == 0 && pad_index({0x89,51,0}) == 15);
+    // Measured physical pad order, independent of ascending MIDI note order.
+    const uint8_t measured[] = {37,36,42,82,40,38,46,44,48,47,45,43,49,55,51,53};
+    const uint8_t pitches[] = {60,62,64,65,67,69,71,72,74,76,77,79,81,83,84,86};
+    for (int pad = 0; pad < 16; ++pad) {
+        assert(pad_index({0x99,measured[pad],100}) == pad);
+        assert(pad_index({0x89,measured[pad],0}) == pad);
+        assert(pad_index({0x99,measured[pad],0}) == pad);
+        assert(pad_index({0xa9,measured[pad],64}) == pad);
+        assert(pad_scale_notes[pad] == pitches[pad]);
+    }
+    assert(pad_index({0x99,39,100}) == -1 && pad_index({0x99,50,100}) == -1);
+    assert(pad_index({0x90,37,100}) == -1); // Another channel is not a surface pad.
     assert(pad_index({0xb0,36,127}) == -1 && pad_index({0x90,111,127}) == -1);
     MidiQueue<4> queue;
     assert(queue.push({0x90,60,100}) && queue.push({0x90,64,100}) && queue.push({0x80,60,0}));

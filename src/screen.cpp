@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "screen.h"
+#include "pads.h"
 #include <stdexcept>
 
 Screen::Screen(const juce::String& font_path) {
@@ -27,13 +28,12 @@ juce::Image Screen::draw(const ScreenState& state) {
     g.setColour(juce::Colour(0xff29333e)); g.fillRoundedRectangle(237, 67, 71, 6, 3);
     g.setColour(mint); g.fillRoundedRectangle(237, 67, juce::jlimit(1.0f, 71.0f, state.peak * 142), 6, 3);
     label("C major", 237, 83, 80, 18, 12, muted);
-    static const char* notes[] = {"C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5", "D5", "E5", "F5", "G5", "A5", "B5", "C6", "D6"};
     for (int pad = 0; pad < 16; ++pad) {
         int x = 12 + (pad % 4) * 77, y = 123 + (3 - pad / 4) * 19;
         bool held = (state.held & (1u << pad)) != 0;
         g.setColour(held ? mint : juce::Colour(0xff26323d));
         g.fillRoundedRectangle(float(x), float(y), 65, 16, 3);
-        label(notes[pad], x + 7, y, 57, 16, 11, held ? background : text);
+        label(pad_note_labels[pad], x + 7, y, 57, 16, 11, held ? background : text);
     }
     g.setColour(juce::Colour(0xff30404b)); g.fillRect(12, 205, 296, 1);
     label("Push: stock app", 12, 210, 296, 20, 13, text);

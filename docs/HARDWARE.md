@@ -152,9 +152,15 @@ The public serial driver transports bytes; it does not define the surface
 microcontroller's LED colours, pad calibration, battery commands or every
 button/encoder number. Bidirectional transport and full packet callbacks are
 provided for implementing those protocols. No guessed LED SysEx or calibration
-commands are sent at startup. The known demo pad map and wheel Push behavior
-are retained from the initial proof of concept, separately from the driver
-reference.
+commands are sent at startup. The physical pad map was measured on the device
+by tapping pads 1–16 in
+printed-number order. Their channel-10 note numbers are:
+`37, 36, 42, 82, 40, 38, 46, 44, 48, 47, 45, 43, 49, 55, 51, 53`.
+`src/pads.h` is the shared map for routing and screen labels; pad 1 plays C4,
+pad 2 D4, through pad 16 D6. Note-off, velocity-zero release and polyphonic
+pressure use the same physical map. The earlier sequential 36–51 assumption
+was incorrect. Wheel Push behavior is separate from this note mapping.
+This changes note routing, not sensor sensitivity or factory calibration.
 
 The AC50 source describes supply voltage, not a battery percentage gauge.
 Only attributes actually present are reported. In particular, missing battery

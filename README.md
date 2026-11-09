@@ -89,8 +89,9 @@ python3 device.py start --seconds 45
   The mixer exposes real controls and validates explicit route changes.
 - **ALSA raw MIDI** discovers and opens the surface, external and USB ports
   in both directions. Full packets, realtime and SysEx are supported.
-  The control surface is read directly. Pads send notes
-  36–51; wheel Push is control 111. Running status, split reads, realtime
+  The control surface is read directly. Pads use the measured, nonsequential
+  channel-10 map in `src/pads.h`; wheel Push is control 111. Running status,
+  split reads, realtime
   bytes and note-on velocity-zero releases are handled. Queue overflow
   clears pending events and silences voices rather than losing a note-off.
 - **Built-in synth** mixes sine and triangle oscillators with velocity and

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "pads.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -147,6 +148,6 @@ private:
 
 inline int pad_index(MidiEvent event) {
     unsigned kind = event.status & 0xf0;
-    return (kind == 0x80 || kind == 0x90 || kind == 0xa0) &&
-           event.key >= 36 && event.key < 52 ? event.key - 36 : -1;
+    if ((event.status & 0x0f) != 9 || (kind != 0x80 && kind != 0x90 && kind != 0xa0)) return -1;
+    return surface_pad_index(event.key);
 }
