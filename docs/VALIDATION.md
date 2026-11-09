@@ -9,9 +9,10 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Twenty-five regression tests pass on Linux ARM64. On macOS, sixteen
+- Twenty-six regression tests pass on Linux ARM64. On macOS, seventeen
   portable tests pass and nine Linux-specific tests are skipped. The build
-  also renders the recorder page preview `build/preview-recorder.png`.
+  also renders the recorder and light show page previews
+  `build/preview-recorder.png` and `build/preview-lights.png`.
 - Recorder fixtures cover L + R / L / R selection, mono microphone mixing,
   S16_LE, S24_3LE and S32_LE conversion, 44.1/48/32 kHz linear rate
   conversion, ring priming, underrun re-priming, overflow and flush, takes
@@ -27,6 +28,12 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   which buttons accept red, nothing sent before an application sets a light,
   change-only updates and a full or limited queue resuming on the next pass.
   Output fixtures fill the 64-message port queue and drain it in one pass.
+- Light show fixtures check scene timing and wrap-round, a roll call that
+  names all 42 lights once in panel order, red only on white/red buttons,
+  sixteen distinct pad hues, smooth fades, and every 25 ms frame of the loop:
+  only values the hardware accepts, every light used, at least 100 colours
+  per pad and each frame within one 48-message update. The headless app test
+  drives `page lights`, `lights N|next|previous` and their errors.
 - Control-map fixtures cover every measured button and control number,
   channel separation from pads, release by note-off or velocity zero, signed
   wheel steps, main-volume gain and the lossless surface log. A fake control

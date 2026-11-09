@@ -330,11 +330,45 @@ so the base does not send them.
 the MIDI thread sends only the lights that changed, at most 48 messages per
 5 ms pass. Nothing is sent for a light the application has never set, so
 startup leaves the stock app's last lights in place, apart from the four
-transport lights the demo's recorder sets. The control commands
+transport lights the demo's recorder sets and the light show. The control commands
 are `led pad 1-16 R G B`, `led fader R G B`, `led bank A-H on|off`,
 `led button NAME off|dim|bright|red-dim|red-bright` (names as in
 `src/controls.h`, ignoring case and punctuation, so `tap-tempo` or `TapTempo`)
 and `led off`.
+
+### Light show
+
+`src/light_show.h` is a looping LED showcase of ten scenes (48.9 s) built only
+from the measured messages above. `light_frame(ms)` is a pure function of the
+position in the loop: the MIDI thread requests a frame every 25 ms while the
+light page is open, and the screen draws the same frame as its mirror.
+Because `SurfaceLights` sends only changes, a frame costs at most 42 messages
+and usually far fewer; 16 pad SysEx at 40 frames a second is about 7.7 KB/s
+on the 4 Mbaud surface link. Fades square their level, as LED drive is
+linear while brightness perception is not.
+
+| Scene | Lights |
+| --- | --- |
+| Roll call | Banks A–H, the left buttons and fader, pads 1–16, then the right buttons light one by one, all together, then dark |
+| Button colours | White/red buttons step dim, bright, dim red, red; single-colour buttons dim and bright; pads and fader match |
+| Sixteen colours | Each pad fades in with its own hue |
+| Rainbow | Diagonal hues flow across the pads; bank and button chases |
+| Breathe | Teal, magenta and amber fades; banks as a level meter |
+| Ripple | Blue-violet rings moving out from the pad centre |
+| Sparkle | Random pads flash in random colours and fade |
+| Comet | A tail round the pad edge; bank lights scan A–H and back |
+| Levels | Pad columns bounce green, yellow, red; Tap Tempo blinks at 120 BPM |
+| Finale | Four flashes on the beat, a fading rainbow, then dark |
+
+**Pad FX** opens and closes the page. On it, the left and middle buttons above
+the screen go to the previous and next scene and the right one returns to the
+synth. A held pad glows white over the show and fades back over 400 ms after
+release. Closing the page, Sample, Sample Record or Play turns every light off
+and gives the transport lights back to the recorder; quitting during the show
+also leaves the surface dark. While the page is open an `led` command lasts
+only until the next frame. Remotely, `page lights` starts the show,
+`lights 1-10|next|previous` jumps to a scene, and `status` reports `page` and
+`light_scene` (0 when the page is closed).
 
 Each output port queues 64 complete messages, and every pass writes until the
 driver buffer is full. Before this, a port held 7 messages and wrote one per

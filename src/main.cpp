@@ -8,6 +8,7 @@
 #include "clock_io.h"
 #include "hardware_midi.h"
 #include "leds.h"
+#include "light_show.h"
 #include "mixer.h"
 #include "platform.h"
 #include "power_button.h"
@@ -69,8 +70,10 @@ struct Shared {
     UsbAudioInput usb;
     std::atomic<uint8_t> source {uint8_t(InputSource::Off)}, channels {uint8_t(InputChannels::Stereo)};
     std::atomic<float> input_left {0}, input_right {0}; // Decaying peaks of the selected source.
-    std::atomic<bool> recorder_page {false};
+    std::atomic<Page> page {Page::Synth};
+    std::atomic<unsigned> light_position {0}; // Light show position in ms; the MIDI thread writes it.
 };
+constexpr std::array<const char*, 3> page_names {"synth", "recorder", "lights"};
 struct RenderContext { Shared& state; Synth& synth; float meter_left = 0, meter_right = 0; };
 void render_audio(void* pointer, const AudioBlock& input, AudioBlock& output) {
     auto& context = *static_cast<RenderContext*>(pointer);
@@ -116,7 +119,7 @@ std::string status(const Shared& state) {
     snprintf(reply, sizeof(reply), "OK frames=%llu sounding_blocks=%llu hardware_events=%u external_events=%u synthetic_events=%u "
              "held=%04x last_pad=%d velocity=%d last_midi=%06x peak=%.6f input_peak=%.6f capture_frames=%llu capture_active=%u "
              "xruns=%u capture_xruns=%u queue_overruns=%u clocks=%u gain=%.2f monitor=%.2f push_exit=%u "
-             "source=%s channels=%s recorder=%s recorded_frames=%u play_frame=%u takes=%u usb=%s",
+             "source=%s channels=%s recorder=%s recorded_frames=%u play_frame=%u takes=%u usb=%s page=%s light_scene=%u",
              static_cast<unsigned long long>(state.audio.frames.load()), static_cast<unsigned long long>(state.audio.sounding_blocks.load()),
              state.hardware_events.load(), state.external_events.load(), state.synthetic_events.load(), state.held.load(), state.last_pad.load() + 1,
              state.velocity.load(), state.last_midi.load(), double(state.audio.peak.load()), double(state.audio.input_peak.load()),
@@ -124,7 +127,8 @@ std::string status(const Shared& state) {
              state.audio.xruns.load(), state.audio.capture_xruns.load(), state.overruns.load(), state.clocks.load(), double(state.gain.load()), double(state.monitor.load()), unsigned(state.push_exit.load()),
              input_source_names[state.source.load()], input_channel_names[state.channels.load()],
              Recorder::state_names[size_t(state.recorder.state())], state.recorder.length(), state.recorder.position(),
-             state.recorder.takes(), usb_input_state_names[size_t(state.usb.state())]);
+             state.recorder.takes(), usb_input_state_names[size_t(state.usb.state())], page_names[size_t(state.page.load())],
+             state.page.load() == Page::Lights ? light_scene_at(state.light_position.load()) + 1 : 0u);
     return reply;
 }
 std::string recorder_json(const Shared& state) {
@@ -259,7 +263,7 @@ private:
                             bool moved = input.kind == SurfaceInput::Kind::Control &&
                                 (is_control(input, SurfaceControl::Wheel) ? input.delta != 0 : std::chrono::steady_clock::now() >= syncing_until);
                             if (moved || input.pressed) state.last_input.store(pack_last_input(input));
-                            if (input.pressed && input.kind == SurfaceInput::Kind::Button && !state.prompting.load()) recorder_button(state, SurfaceButton(input.index));
+                            if (input.pressed && input.kind == SurfaceInput::Kind::Button && !state.prompting.load()) page_button(state, SurfaceButton(input.index));
                             route(state, event);
                         }
                     } else {
@@ -285,10 +289,17 @@ private:
                 MidiSendRequest request;
                 for (unsigned n = 0; n < 32 && midi_output.pop(request); ++n)
                     if (!midi.send(request.address.data(), request.packet)) ++state.midi_send_errors;
-                recorder_lights(state);
+                light_show(state, now);
+                if (!show_running) recorder_lights(state);
                 lights.update([&](const MidiPacket& packet) { return midi.send_surface(packet); }, 48);
                 midi.flush();
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            // Leave a dark surface rather than a frozen show frame.
+            if (show_running) {
+                lights.all_off();
+                lights.update([&](const MidiPacket& packet) { return midi.send_surface(packet); }, 64);
+                midi.flush();
             }
         } catch (const std::exception& error) {
             std::cerr << error.what() << '\n'; state.failed.store(true); state.running.store(false);
@@ -358,8 +369,19 @@ private:
             else return "ERR use transport record, play or stop";
             return "OK transport " + argument + " requested";
         }
-        if (action == "page" && (argument == "synth" || argument == "recorder")) {
-            state.recorder_page.store(argument == "recorder"); return "OK page " + argument;
+        if (action == "page") {
+            auto name = std::find(page_names.begin(), page_names.end(), argument);
+            if (name == page_names.end()) return "ERR use page synth, recorder or lights";
+            state.page.store(Page(name - page_names.begin())); return "OK page " + argument;
+        }
+        if (action == "lights") {
+            int count = int(light_scenes.size()), scene = -1;
+            unsigned number = 0;
+            if (argument == "next" || argument == "previous") scene = next_scene(state, argument == "next" ? 1 : -1);
+            else if (unsigned_value(argument, number) && number >= 1 && number <= light_scenes.size()) scene = int(number) - 1;
+            else return "ERR use lights 1-" + std::to_string(count) + ", next or previous";
+            state.page.store(Page::Lights); scene_request.store(scene);
+            return "OK lights scene " + std::to_string(scene + 1) + ' ' + light_scenes[size_t(scene)].name;
         }
         if (action == "recorder" && argument.empty()) return "OK " + recorder_json(state);
         if (action == "storage-mount" || action == "storage-unmount")
@@ -387,7 +409,7 @@ private:
             return unsigned_value(id, value) && mixer.set(value, values) ? "OK mixer updated" : "ERR unavailable control, wrong value count or range";
         }
         return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, led, midi, midi-send, mixer, mixer-set, input, "
-               "source, channels, transport, page, recorder, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
+               "source, channels, transport, page, lights, recorder, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
     }
     // Service thread only. Recording stops before any route changes, and the
     // new source is published only once its route is in place. Without the
@@ -405,28 +427,68 @@ private:
     }
     // MIDI thread. The buttons above the screen are soft keys for the labels
     // drawn under them, so on the synth page they only open the recorder.
-    void recorder_button(Shared& state, SurfaceButton button) {
-        bool page = state.recorder_page.load();
+    // Sample toggles the recorder page and Pad FX the light show.
+    void page_button(Shared& state, SurfaceButton button) {
+        auto page = state.page.load();
+        bool recorder = page == Page::Recorder, lights_page = page == Page::Lights;
         switch (button) {
-        case SurfaceButton::Sample: state.recorder_page.store(!page); break;
+        case SurfaceButton::Sample: state.page.store(recorder ? Page::Synth : Page::Recorder); break;
+        case SurfaceButton::PadFx: state.page.store(lights_page ? Page::Synth : Page::Lights); break;
         case SurfaceButton::TopLeft: {
-            if (page) {
+            if (lights_page) { scene_request.store(next_scene(state, -1)); break; }
+            if (recorder) {
                 int pending = source_request.load();
                 auto current = pending >= 0 ? InputSource(pending) : InputSource(state.source.load());
                 source_request.store(int(next_input_source(current)));
             }
-            state.recorder_page.store(true); break;
+            state.page.store(Page::Recorder); break;
         }
         case SurfaceButton::TopMiddle:
-            if (page && input_has_channels(InputSource(state.source.load())))
+            if (lights_page) { scene_request.store(next_scene(state, 1)); break; }
+            if (recorder && input_has_channels(InputSource(state.source.load())))
                 state.channels.store(uint8_t(next_input_channels(InputChannels(state.channels.load()))));
-            state.recorder_page.store(true); break;
-        case SurfaceButton::TopRight: state.recorder_page.store(!page); break;
-        case SurfaceButton::SampleRecord: state.recorder.record(); state.recorder_page.store(true); break;
-        case SurfaceButton::Play: state.recorder.play(); state.recorder_page.store(true); break;
+            state.page.store(Page::Recorder); break;
+        case SurfaceButton::TopRight: state.page.store(page == Page::Synth ? Page::Recorder : Page::Synth); break;
+        case SurfaceButton::SampleRecord: state.recorder.record(); state.page.store(Page::Recorder); break;
+        case SurfaceButton::Play: state.recorder.play(); state.page.store(Page::Recorder); break;
         case SurfaceButton::Stop: state.recorder.stop(); break;
         default: break;
         }
+    }
+    // Scene `step` scenes after the one playing; the first scene when the show is closed.
+    static int next_scene(const Shared& state, int step) {
+        if (state.page.load() != Page::Lights) return 0;
+        int count = int(light_scenes.size()), current = int(light_scene_at(state.light_position.load()));
+        return ((current + step) % count + count) % count;
+    }
+    // MIDI thread. While the light page is open, sends a show frame every
+    // 25 ms; a held pad glows white and fades back over 400 ms after release.
+    // Closing the page turns every light off and hands the transport lights
+    // back to the recorder. A manual `led` command lasts until the next frame.
+    void light_show(Shared& state, std::chrono::steady_clock::time_point now) {
+        using namespace std::chrono;
+        if (state.page.load() != Page::Lights) {
+            if (show_running) {
+                show_running = false; lights.all_off(); shown_lights.fill(0xff);
+                scene_request.store(-1); state.light_position.store(0);
+            }
+            return;
+        }
+        if (!show_running) { show_running = true; show_start = next_frame = now; }
+        int scene = scene_request.exchange(-1);
+        if (scene >= 0) { show_start = now - milliseconds(light_scene_start(unsigned(scene))); next_frame = now; }
+        if (now < next_frame) return;
+        next_frame = now + milliseconds(25);
+        auto position = unsigned(duration_cast<milliseconds>(now - show_start).count() % light_show_length());
+        state.light_position.store(position);
+        auto frame = light_frame(position);
+        uint32_t held = state.held.load();
+        for (unsigned pad = 0; pad < surface_pad_lights; ++pad) {
+            if (held & (1u << pad)) touched[pad] = now;
+            float glow = 1 - duration<float, std::milli>(now - touched[pad]).count() / 400.0f;
+            if (glow > 0) frame.pads[pad] = mix_light(frame.pads[pad], {127, 127, 127}, glow);
+        }
+        show_light_frame(lights, frame);
     }
     // MIDI thread. Sets the transport lights when the recorder's state calls
     // for a different light, so a manual `led` command stays until then.
@@ -435,7 +497,7 @@ private:
         bool recording = mode == Recorder::State::Recording, playing = mode == Recorder::State::Playing;
         bool source = state.source.load() != uint8_t(InputSource::Off);
         const std::array<std::pair<SurfaceButton, ButtonLight>, 4> wanted {{
-            {SurfaceButton::Sample, state.recorder_page.load() ? ButtonLight::Bright : ButtonLight::Off},
+            {SurfaceButton::Sample, state.page.load() == Page::Recorder ? ButtonLight::Bright : ButtonLight::Off},
             {SurfaceButton::SampleRecord, recording ? ButtonLight::Bright : source ? ButtonLight::Dim : ButtonLight::Off},
             {SurfaceButton::Play, playing ? ButtonLight::Bright : state.recorder.length() ? ButtonLight::Dim : ButtonLight::Off},
             {SurfaceButton::Stop, recording || playing ? ButtonLight::Dim : ButtonLight::Off},
@@ -495,6 +557,11 @@ private:
     std::string usb_device;
     std::atomic<int> source_request {-1}; // MIDI thread asks, service thread applies.
     std::array<uint8_t, 4> shown_lights {{0xff, 0xff, 0xff, 0xff}};
+    std::atomic<int> scene_request {-1}; // Any thread asks; the MIDI thread jumps the light show.
+    // Light show timing; MIDI thread only.
+    bool show_running = false;
+    std::chrono::steady_clock::time_point show_start, next_frame;
+    std::array<std::chrono::steady_clock::time_point, surface_pad_lights> touched {};
     int fd = -1;
     HardwareMidi midi;
     HardwareMixer mixer;
@@ -666,8 +733,16 @@ int main(int argc, char** argv) {
             save_png(screen.draw(state), argv[2]); return 0;
         }
         if (argc == 3 && !strcmp(argv[1], "--preview-recorder")) {
-            Screen screen(font); ScreenState state; state.recorder_page = true; state.recorder = preview_recorder();
+            Screen screen(font); ScreenState state; state.page = Page::Recorder; state.recorder = preview_recorder();
             state.last_input = surface_buttons[size_t(SurfaceButton::Play)].name;
+            save_png(screen.draw(state), argv[2]); return 0;
+        }
+        // Optional position in ms; the default is mid-way through the rainbow.
+        if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--preview-lights")) {
+            Screen screen(font); ScreenState state; state.page = Page::Lights;
+            state.light_position = light_scene_start(3) + 1800;
+            require(argc == 3 || unsigned_value(std::string(argv[3]), state.light_position), "Invalid light show position");
+            state.last_input = surface_buttons[size_t(SurfaceButton::PadFx)].name;
             save_png(screen.draw(state), argv[2]); return 0;
         }
         std::string output = "hw:I2S,0", input = "hw:I2S,0", runtime = "/run/sample-base", usb_input = "auto";
@@ -723,9 +798,13 @@ int main(int argc, char** argv) {
             auto hint_until = std::chrono::steady_clock::time_point::min();
             while (state.running.load() && !interrupted && std::chrono::steady_clock::now() < deadline) {
                 if (screen && display) {
-                    ScreenState view {state.held.load(), state.last_pad.load(), state.velocity.load(), state.audio.peak.load(), state.audio.xruns.load(), {}, describe_last_input(state.last_input.load()), state.recorder_page.load(), {}};
+                    ScreenState view;
+                    view.held = state.held.load(); view.last_pad = state.last_pad.load(); view.velocity = state.velocity.load();
+                    view.peak = state.audio.peak.load(); view.xruns = state.audio.xruns.load();
+                    view.last_input = describe_last_input(state.last_input.load()); view.page = state.page.load();
+                    view.light_position = state.light_position.load();
                     { std::lock_guard<std::mutex> lock(state.prompt_lock); view.prompt = state.prompt; }
-                    if (view.recorder_page) view.recorder = recorder_view(state);
+                    if (view.page == Page::Recorder) view.recorder = recorder_view(state);
                     auto now = std::chrono::steady_clock::now();
                     if (state.recorder.refused() != refusals_seen) { refusals_seen = state.recorder.refused(); hint_until = now + std::chrono::milliseconds(2500); }
                     if (now < hint_until) { view.recorder.detail = "Choose an input first: left button above the screen"; view.recorder.hint = true; }

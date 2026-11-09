@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "screen.h"
+#include "light_show.h"
 #include "pads.h"
 #include "recorder.h"
 #include <cmath>
@@ -53,8 +54,12 @@ juce::Image Screen::draw(const ScreenState& state) {
         label(lines[4], 12, 210, 296, 20, 12, muted);
         return image;
     }
-    if (state.recorder_page) {
+    if (state.page == Page::Recorder) {
         draw_recorder(g, state);
+        return image;
+    }
+    if (state.page == Page::Lights) {
+        draw_lights(g, state);
         return image;
     }
     label("sample-base", 12, 7, 220, 27, 25, text);
@@ -66,6 +71,7 @@ juce::Image Screen::draw(const ScreenState& state) {
     g.setColour(track); g.fillRoundedRectangle(237, 67, 71, 6, 3);
     g.setColour(mint); g.fillRoundedRectangle(237, 67, juce::jlimit(1.0f, 71.0f, state.peak * 142), 6, 3);
     label("C major", 237, 83, 80, 18, 12, muted);
+    label("Pad FX: lights", 237, 99, 76, 16, 11, muted);
     for (int pad = 0; pad < 16; ++pad) {
         int x = 12 + (pad % 4) * 77, y = 123 + (3 - pad / 4) * 19;
         bool held = (state.held & (1u << pad)) != 0;
@@ -158,6 +164,59 @@ void Screen::draw_recorder(juce::Graphics& g, const ScreenState& state) {
     label(juce::String::fromUTF8(view.detail.c_str()), 12, 188, 296, 16, 12, view.hint ? amber : muted);
     g.setColour(rule); g.fillRect(12, 205, 296, 1);
     label("Rec  Play  Stop   Sample: synth", 12, 210, 190, 20, 12, text);
+    if (!state.last_input.empty())
+        label(juce::String::fromUTF8(state.last_input.c_str()), 196, 210, 112, 20, 12, mint, juce::Justification::centredRight);
+}
+
+void Screen::draw_lights(juce::Graphics& g, const ScreenState& state) {
+    auto label = [&](juce::String value, int x, int y, int w, int h, float size, juce::Colour colour,
+                     juce::Justification justification = juce::Justification::centredLeft) {
+        draw_label(g, typeface, value, x, y, w, h, size, colour, justification);
+    };
+    unsigned position = state.light_position % light_show_length();
+    unsigned scene = light_scene_at(position), into = position - light_scene_start(scene);
+    auto frame = light_frame(position);
+
+    const std::array<std::pair<juce::String, juce::String>, 3> keys {{{"SCENE", "Previous"}, {"SCENE", "Next"}, {"PAGE", "Synth"}}};
+    for (unsigned n = 0; n < keys.size(); ++n) {
+        int x = 8 + int(n) * 104;
+        g.setColour(panel); g.fillRoundedRectangle(float(x), 6, 96, 38, 5);
+        label(keys[n].first, x + 10, 8, 82, 14, 10, muted);
+        label(keys[n].second, x + 10, 22, 82, 20, 17, text);
+    }
+
+    label("LIGHT SHOW", 12, 54, 160, 14, 10, mint);
+    label(light_scenes[scene].name, 12, 68, 168, 30, 24, text);
+    label(light_scenes[scene].detail, 12, 100, 168, 18, 12, muted);
+    label("Scene " + juce::String(scene + 1) + " of " + juce::String(int(light_scenes.size())), 12, 146, 168, 18, 12, text);
+    // One segment per scene; the current one fills as it plays.
+    for (unsigned n = 0; n < light_scenes.size(); ++n) {
+        float x = 12 + n * 17.0f;
+        g.setColour(track); g.fillRoundedRectangle(x, 170, 13, 5, 2.5f);
+        float fill = n < scene ? 1.0f : n == scene ? float(into) / float(light_scenes[n].length_ms) : 0.0f;
+        if (fill > 0) { g.setColour(mint); g.fillRoundedRectangle(x, 170, std::max(13 * fill, 3.0f), 5, 2.5f); }
+    }
+
+    // Mirror of the surface: fader light, pads (pad 1 bottom left) and bank
+    // lights A-H. LED drive is squared for even fades; the LCD has its own
+    // gamma, so the square root shows roughly what the eye sees on the pads.
+    auto shown = [](Rgb colour) {
+        if (!colour.r && !colour.g && !colour.b) return juce::Colour(0xff1f2830);
+        auto channel = [](uint8_t value) { return uint8_t(std::lround(std::sqrt(value / 127.0f) * 255)); };
+        return juce::Colour(channel(colour.r), channel(colour.g), channel(colour.b));
+    };
+    g.setColour(shown(frame.fader)); g.fillRoundedRectangle(184, 56, 5, 108, 2.5f);
+    for (unsigned pad = 0; pad < surface_pad_lights; ++pad) {
+        float x = 196 + float(pad % 4) * 28, y = 56 + float(3 - pad / 4) * 28;
+        g.setColour(shown(frame.pads[pad])); g.fillRoundedRectangle(x, y, 24, 24, 3);
+    }
+    for (unsigned bank = 0; bank < surface_bank_lights; ++bank) {
+        g.setColour(frame.banks[bank] ? text : track);
+        g.fillEllipse(196 + bank * (101.0f / 7), 170, 7, 7);
+    }
+
+    g.setColour(rule); g.fillRect(12, 205, 296, 1);
+    label("Pad FX: synth   Sample: recorder", 12, 210, 190, 20, 12, text);
     if (!state.last_input.empty())
         label(juce::String::fromUTF8(state.last_input.c_str()), 196, 210, 112, 20, 12, mint, juce::Justification::centredRight);
 }

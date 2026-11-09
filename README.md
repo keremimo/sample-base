@@ -19,7 +19,19 @@ one returns to the synth. **Sample Record** starts and finishes a take of up
 to 60 seconds, **Play** plays it from the start (also ending a take in
 progress) and **Stop** stops either. The screen shows L/R input meters, the
 take's waveform and the playhead, and the transport buttons light up.
-Inputs stay untouched until one is chosen. Presets, sequencing, project
+Inputs stay untouched until one is chosen.
+
+**Light show.** Press **Pad FX** for a 49-second looping LED showcase that
+uses every surface light: a roll call that lights the bank lights, buttons,
+fader and pads one by one, every button colour, a colour for each pad, then
+rainbow, breathing fades, ripples, sparkles, a comet, level meters and a
+finale. The screen names the scene and mirrors the pad, fader and bank
+lights; the left and middle buttons above the screen step back and forward
+through the scenes, and the right one (or **Pad FX** again) returns to the
+synth and turns the lights off. Pads still play while it runs, glowing white
+under your finger.
+
+Presets, sequencing, project
 storage, saving takes and a USB audio output bridge are future work. The reusable base also supplies audio input, mixer and
 jack controls, bidirectional MIDI and hotplug, pad/button/bank lights,
 display/backlight, sync GPIO,
@@ -38,7 +50,7 @@ cd sample-base
 
 This builds Linux ARM64 binaries in a Debian container, runs the tests,
 renders a note and its release into `build/test.wav`, and creates
-`build/preview.png` and `build/preview-recorder.png`. The complete app is
+`build/preview.png`, `build/preview-recorder.png` and `build/preview-lights.png`. The complete app is
 `build/sample-base`; no sound module, factory-preset bank or sibling checkout
 is needed.
 
@@ -54,6 +66,7 @@ The offline app checks are:
 build/sample-base --self-test build/test.wav
 build/sample-base --preview build/preview.png
 build/sample-base --preview-recorder build/preview-recorder.png
+build/sample-base --preview-lights build/preview-lights.png [MS]
 ```
 
 No offline mode opens the MPC's audio, display or control surface.

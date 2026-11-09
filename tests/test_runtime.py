@@ -156,6 +156,26 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIn("source=off channels=left", command("status"))
                 self.assertIn("usb=stopped", command("status"))
                 self.assertTrue(command("page synth").startswith("OK"))
+
+                def status_until(text):
+                    for _ in range(300):
+                        reply = command("status")
+                        if text in reply:
+                            return reply
+                        time.sleep(0.01)
+                    self.fail("status never showed " + text + ": " + reply)
+                self.assertIn("page=synth light_scene=0", command("status"))
+                self.assertTrue(command("page lights").startswith("OK"))
+                status_until("page=lights light_scene=1")
+                self.assertEqual(command("lights 4"), "OK lights scene 4 Rainbow")
+                status_until("light_scene=4")
+                self.assertTrue(command("lights next").startswith("OK lights scene 5"))
+                status_until("light_scene=5")
+                self.assertTrue(command("lights previous").startswith("OK lights scene 4"))
+                for bad in ("lights", "lights 0", "lights 11", "lights first"):
+                    self.assertTrue(command(bad).startswith("ERR"), bad)
+                self.assertTrue(command("page synth").startswith("OK"))
+                status_until("page=synth light_scene=0")
                 stream = subprocess.run([str(ROOT / "build/sample-base"), "--runtime-dir", str(runtime), "--ctl-stream"],
                                         input="status\nunknown\nsurface-log 0\n", capture_output=True, text=True, timeout=15)
                 replies = stream.stdout.splitlines()

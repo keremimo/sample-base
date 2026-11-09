@@ -17,6 +17,8 @@ struct RecorderView {
     std::array<uint8_t, columns> waveform {};
 };
 
+enum class Page : uint8_t { Synth, Recorder, Lights };
+
 struct ScreenState {
     uint32_t held = 0;
     int last_pad = -1, velocity = 0;
@@ -26,8 +28,9 @@ struct ScreenState {
     // Non-empty text replaces the instrument view, e.g. during calibration.
     std::string prompt;
     std::string last_input; // Name of the most recent non-pad control.
-    bool recorder_page = false;
+    Page page = Page::Synth;
     RecorderView recorder;
+    unsigned light_position = 0; // Milliseconds into the light show loop.
 };
 class Screen {
 public:
@@ -35,6 +38,7 @@ public:
     juce::Image draw(const ScreenState& state);
 private:
     void draw_recorder(juce::Graphics& g, const ScreenState& state);
+    void draw_lights(juce::Graphics& g, const ScreenState& state);
     juce::Typeface::Ptr typeface;
     juce::Image image {juce::Image::ARGB, 320, 240, true};
 };
