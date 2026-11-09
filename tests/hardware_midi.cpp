@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "surface/controls.h"
 #include "drivers/hardware_midi.h"
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cstdio>
@@ -83,6 +84,10 @@ int main() {
         midi.flush();
         const size_t written = 3 + 3 * HardwareMidi::output_packets;
         assert(wire.size() == written && midi.json().find("\"send_drops\":1") != std::string::npos);
+        auto open = midi.open_ports(); // The typed view an app's dashboard reads.
+        assert(open.send_drops == 1 && open.input_errors == 0 && open.ports.size() == 3);
+        assert(std::count_if(open.ports.begin(), open.ports.end(), [](const auto& port) { return port.surface; }) == 1);
+        assert(std::all_of(open.ports.begin(), open.ports.end(), [](const auto& port) { return port.input && port.output; }));
         assert(midi.send_surface(surface_position_packet()));
         midi.flush();
         assert(surface_wire == std::vector<uint8_t>({0xf0,0x47,0x7f,0x5c,0x42,0x00,0x00,0xf7}) && wire.size() == written);
@@ -94,6 +99,9 @@ int main() {
         midi.read([&](const MidiPortInfo&, const MidiPacket& packet) { received.push_back(packet); });
         assert(received.size() == 1 && received[0].bytes[0] == 0xb0 && received[0].bytes[1] == 120);
         assert(handles == 4 && midi.json().find("\"input_errors\":1") != std::string::npos);
+        open = midi.open_ports();
+        assert(open.input_errors == 1 && open.ports.size() == 2); // The failed USB port is gone.
+        assert(std::none_of(open.ports.begin(), open.ports.end(), [](const auto& port) { return port.card == "USB"; }));
         fail_read = false; midi.rescan(); assert(handles == 6);
         surface_present = false;
         assert(midi.rescan() && !midi.has_surface() && !midi.send_surface(surface_position_packet()));

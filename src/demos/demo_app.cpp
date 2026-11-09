@@ -39,6 +39,7 @@ void DemoApp::surface(const SurfaceEvent& event) {
     bool prompting = session().prompting.load();
     if (is_control(input, SurfaceControl::MainVolume)) state.gain.store(main_volume_gain(input.value));
     bool sequenced = !prompting && seq_input.surface(state, event);
+    if (!prompting) system_wheel(state, event);
     if (input.kind == SurfaceInput::Kind::Button && input.pressed && !prompting)
         press_button(SurfaceButton(input.index));
     if (event.pad >= 0) {
@@ -47,7 +48,7 @@ void DemoApp::surface(const SurfaceEvent& event) {
     }
 }
 
-// Sample, Pad FX, 16 Levels and SEQ toggle their page; the right button above
+// Sample, Pad FX, 16 Levels, SEQ and Knob FX toggle their page; the right button above
 // the screen goes home to the synth, or from there to the recorder. The others
 // belong to the page's demo, and the recorder's transport works anywhere.
 // Seq Record opens the sequencer armed, and Stop stops it on every page.
@@ -59,6 +60,7 @@ void DemoApp::press_button(SurfaceButton button) {
     case SurfaceButton::PadFx: toggle(Page::Lights); return;
     case SurfaceButton::SixteenLevels: toggle(Page::Pads); return;
     case SurfaceButton::Seq: toggle(Page::Seq); return;
+    case SurfaceButton::KnobFx: toggle(Page::System); return;
     case SurfaceButton::SeqRecord: sequencer_record_button(state); return;
     case SurfaceButton::Stop: state.seq.stop(); break;
     case SurfaceButton::TopRight: state.page.store(page == Page::Synth ? Page::Recorder : Page::Synth); return;
@@ -67,6 +69,7 @@ void DemoApp::press_button(SurfaceButton button) {
     if (page == Page::Lights && light_show_button(state, button)) return;
     if (page == Page::Pads && (button == SurfaceButton::TopLeft || button == SurfaceButton::TopMiddle)) return;
     if (page == Page::Seq && seq_input.button(state, button, Clock::now())) return;
+    if (page == Page::System && system_button(state, button)) return;
     recorder_button(state, button);
 }
 
@@ -87,9 +90,11 @@ void DemoApp::lights(SurfaceLights& lights, Clock::time_point now) {
     if (page != Page::Lights && light_show_lights.close(lights, state)) recorder_lights.forget();
     if (page != Page::Pads) pad_lights.close(lights);
     if (page != Page::Seq && seq_lights.close(lights)) recorder_lights.forget();
+    if (page != Page::System) system_lights.close(lights);
     if (page == Page::Lights) light_show_lights.update(lights, state, held, now);
     if (page == Page::Pads) pad_lights.update(lights, state.pads, held, now);
     if (page == Page::Seq) seq_lights.update(lights, state, now);
+    if (page == Page::System) system_lights.update(lights);
     if (!light_show_lights.running() && !seq_lights.running()) recorder_lights.update(lights, state);
 }
 
@@ -98,7 +103,10 @@ void DemoApp::draw(juce::Graphics& g) {
     draw_demo_screen(g, *ui, feed.frame(state, session()));
 }
 
-void DemoApp::service(Hardware& hardware) { apply_source_request(state, hardware, usb_device); }
+void DemoApp::service(Hardware& hardware) {
+    apply_source_request(state, hardware, usb_device);
+    system_reader.service(state, hardware, Clock::now());
+}
 
 std::string DemoApp::command(const std::string& action, const std::string& argument, Hardware& hardware) {
     if (action == "gain" || action == "monitor") {
@@ -108,16 +116,17 @@ std::string DemoApp::command(const std::string& action, const std::string& argum
     }
     if (action == "page") {
         auto name = std::find(page_names.begin(), page_names.end(), argument);
-        if (name == page_names.end()) return "ERR use page synth, recorder, lights, pads or seq";
+        if (name == page_names.end()) return "ERR use page synth, recorder, lights, pads, seq or system";
         state.page.store(Page(name - page_names.begin())); return "OK page " + argument;
     }
     if (action == "lights") return light_show_command(state, argument);
     if (action == "seq") return sequencer_command(state, action, argument);
+    if (action == "system") return system_command(state, argument);
     return recorder_command(state, hardware, usb_device, action, argument);
 }
 
 std::string DemoApp::command_names() const {
-    return "gain, monitor, page, lights, seq, input, source, channels, transport or recorder";
+    return "gain, monitor, page, lights, seq, system, input, source, channels, transport or recorder";
 }
 
 std::string DemoApp::status() const {

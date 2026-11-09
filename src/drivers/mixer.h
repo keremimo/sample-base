@@ -16,6 +16,10 @@ public:
     bool set(unsigned id, const std::vector<long>& values);
     bool input(const std::string& source);
     std::string json() const;
+    // The first value of a readable boolean control such as "Headphones
+    // Jack" (jack controls are card controls, switches mixer controls):
+    // 1 or 0, or -1 without it.
+    int switch_value(const char* name) const;
     bool available() const { return ctl != nullptr; }
 private:
     bool named_switch(const char* name, bool enabled);

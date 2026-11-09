@@ -98,6 +98,9 @@ static void input() {
     rate = 48000;
     wait_for([&] { return usb.state() == UsbStreamState::Running; });
     assert(usb.rate() == 48000 && usb.channels() == 2 && usb.bits() == 32 && pcm_opens == 1 && playback_opens == 0);
+    auto input = usb.stats();
+    assert(input.state == UsbStreamState::Running && input.rate == 48000 && input.channels == 2 && input.bits == 32);
+    assert(input.opens == 1 && input.trim_ppm == 0);
     { std::lock_guard<std::mutex> lock(name_lock); assert(opened == "hw:CARD=UAC2Gadget,DEV=0"); }
     wait_for([&] { return usb.pull(frames.data(), 128); });
     for (unsigned n = 0; n < 128; ++n) assert(std::abs(frames[2 * n] - 0.5f) < 1e-6f && std::abs(frames[2 * n + 1] + 0.5f) < 1e-6f);
@@ -140,6 +143,9 @@ static void output() {
     { std::lock_guard<std::mutex> lock(name_lock); assert(opened_playback == "hw:CARD=UAC2Gadget,DEV=0"); }
     auto json = usb.json();
     assert(json.find("\"channels\":2,\"bits\":32,") != std::string::npos && json.find("\"trim_ppm\":") != std::string::npos);
+    auto output = usb.stats(); // What the system page shows: the same counters as json().
+    assert(output.state == UsbStreamState::Running && output.rate == 48000 && output.channels == 2 && output.bits == 32);
+    assert(output.opens == 1);
     wait_for([&] { usb.push(block.data(), 128); return signal_frames > 0; });
     assert(writes > 0 && wrong_frames == 0);
 

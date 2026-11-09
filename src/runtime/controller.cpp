@@ -14,7 +14,7 @@ using Clock = std::chrono::steady_clock;
 } // namespace
 
 Controller::Controller(App& app, bool required, UsbAudioOutput& usb) : app(app), surface_required(required), usb_output(usb) {
-    catalog = {midi.json(), midi.outputs()};
+    catalog = {midi.json(), midi.outputs(), midi.open_ports()};
     require(!required || midi.has_surface(), "Control surface unavailable; use --no-surface only for a headless/host test");
 }
 
@@ -77,7 +77,7 @@ void Controller::run_midi(Session& session) {
             if (now >= scan) {
                 if (midi.rescan()) app.midi_lost();
                 require(!surface_required || midi.has_surface(), "Control surface disconnected");
-                MidiCatalog update {midi.json(), midi.outputs()}; catalog_updates.push(update);
+                MidiCatalog update {midi.json(), midi.outputs(), midi.open_ports()}; catalog_updates.push(update);
                 scan = now + std::chrono::seconds(1);
             }
             if (sync_requested.exchange(false)) request_positions();

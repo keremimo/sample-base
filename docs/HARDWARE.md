@@ -55,6 +55,7 @@ The kernel sources remain under their own upstream licences.
 | Sync input/output | GPIO lines named `CV_CLK_IN` / `CV_CLK_OUT` | Opt-in `ClockIo`: timestamped rising/falling input edges, loss counts and explicit output levels; kernel-owned lines are never taken over |
 | USB device connection | Existing USB device controller and gadget configuration | Read-only UDC connection state; the app preserves the existing USB networking/gadget setup |
 | Thermal/network status | Kernel thermal zones and network interfaces | Read-only temperatures and interface state; no radio, network or thermal policy changes |
+| CPU and memory | `/proc/stat` and `/proc/meminfo` | `Platform` reads busy and total CPU time per core and total and available memory; read-only |
 | Session recovery | Existing stock systemd service | RAM-only application and recovery script; wheel Push, remote stop, failure and crash restore the existing service; shutdown does not restart it |
 
 ## Threading and extension points
@@ -368,6 +369,55 @@ whether recording is armed and, per track, its drum, mute, hit count and
 sixteen step velocities. `seq stop`, `seq clear` (every step and mute) and
 `seq reset` (the default groove at 110 BPM) complete the set. `status` also
 reports `seq`, `seq_step` (0 when stopped) and `tempo`.
+
+## System dashboard
+
+The demo's System page (`src/demos/system/`, the **Knob FX** button) shows
+the MPC's live state from what the base already reads. Nothing on it is
+estimated: a value the device does not report shows `n/a`.
+
+| Panel | What it shows | Where it comes from |
+| --- | --- | --- |
+| Health | CPU load, each core's load and 24 seconds of history; memory used of total; CPU and GPU temperatures; supply voltage, type and `online`; power key state and presses; backlight level of its maximum | `Platform::cpu_times()` (`/proc/stat`), `memory()` (`/proc/meminfo`, `MemAvailable`), `temperatures()` (the `cpu-thermal` and `gpu-thermal` zones), `supplies()` (`voltage_now`), `backlight()`; `PowerButton` |
+| Audio | Audio engine running time, output and input peaks, capture state, playback and capture recoveries; USB-C device controller state; USB-C audio in and out: state, rate, underruns, xruns, the output's drift trim and the input's opens | `Session::audio`; `Platform::usb_state()`; `UsbAudioInput::stats()` and `UsbAudioOutput::stats()` |
+| Ports | Each open MIDI port, which directions are open and whether it is the surface; dropped sends and input errors; whether headphones and line out are plugged in | The MIDI thread's port scan (`HardwareMidi::open_ports()`); `HardwareMixer::switch_value()` on the `Headphones Jack` and `Line Out Jack` card controls |
+| Storage | Each mounted block device once (bind mounts of it are left out): path, file system, read-only, free of total | `Platform::storage()`: `/proc/self/mountinfo` and `statvfs()` |
+
+The demo's service hook reads all of it every 500 ms while the page is open,
+storage every 2 seconds, and nothing while it is closed. Each opening starts
+the CPU meter afresh, so the first load shows half a second later. The
+service thread publishes a copy under a lock that only it and the screen
+thread take; the screen copies it once per frame and reads the audio
+engine's atomics directly. The supply is a voltage: the AC50 has no battery
+gauge, so no percentage is shown.
+
+`Hardware` gives every app the same sources: the mixer and platform as
+before, plus read-only views of the power key, `UsbAudioOutput` and the MIDI
+ports as last scanned.
+
+| Control | Action |
+| --- | --- |
+| Knob FX | Shows or hides the system page; lit while it shows |
+| Left button above the screen, wheel left | Previous panel |
+| Middle button above the screen, wheel right | Next panel |
+| Right button above the screen | Back to the synth page |
+
+The same functions are available remotely:
+
+```sh
+python3 device.py ctl page system
+python3 device.py ctl system storage
+python3 device.py ctl system next
+python3 device.py ctl system
+```
+
+`system next|previous|health|audio|ports|storage` opens the page at that
+panel. `system` alone returns JSON with the panel, the number of reads so far
+and the latest readings: `cpu` (total, then each core, 0–1; empty until two
+samples), `memory_total_kb`, `memory_available_kb`, `cpu_millidegrees`,
+`gpu_millidegrees` (null without the zone), `supply`, `power_key`,
+`backlight`, `udc`, `usb_in`, `usb_out`, `midi`, `jacks` (1 plugged in, 0
+empty, -1 unknown) and `storage`. `status` reports `page=system`.
 
 ## Deliberate hardware boundaries
 

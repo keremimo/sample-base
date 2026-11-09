@@ -13,7 +13,9 @@
 class ClockIo;
 class HardwareMixer;
 class Platform;
+class PowerButton;
 class SystemServices;
+class UsbAudioOutput;
 
 // One control-surface message, decoded. `input` names the button or control
 // (Kind::None for pads); `pad` is 0-15 for a pad's note-on, note-off or
@@ -27,12 +29,16 @@ struct SurfaceEvent {
 };
 
 // Hardware an app may use from the service thread only, in App::service()
-// and App::command(). The runtime owns it and restores it on exit.
+// and App::command(). The runtime owns it and restores it on exit. The
+// last three are read-only views of what the runtime runs itself.
 struct Hardware {
     HardwareMixer& mixer;
     Platform& platform;
     SystemServices& services;
     ClockIo& clock;
+    const PowerButton& power;         // The power key, polled on this thread
+    const UsbAudioOutput& usb_output; // What a computer records over USB-C
+    const MidiPorts& midi;            // MIDI ports as last scanned, once a second
 };
 
 // What an application on sample-base provides. run_app() owns the hardware,

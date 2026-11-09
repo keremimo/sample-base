@@ -22,6 +22,12 @@ class PlatformTests(unittest.TestCase):
             compile_fixture(binary, "tests/platform.cpp", "src/drivers/platform.cpp")
             subprocess.run([str(binary), str(Path(temp) / "fixture")], check=True)
 
+    def test_system_page_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "system"
+            compile_fixture(binary, "tests/system.cpp", "src/drivers/platform.cpp")
+            subprocess.run([str(binary)], check=True, timeout=5)
+
     @unittest.skipUnless(sys.platform == "linux" and shutil.which("dbus-daemon"), "requires Linux system bus libraries")
     def test_storage_service_and_suspend_on_private_bus(self):
         with tempfile.TemporaryDirectory() as temp:

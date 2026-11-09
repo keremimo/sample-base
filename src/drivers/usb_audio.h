@@ -33,6 +33,15 @@ long uac2_rate(const std::string& control, const char* name);
 enum class UsbStreamState : uint8_t { Stopped, Missing, Waiting, Running, Failed, Count };
 constexpr std::array<const char*, size_t(UsbStreamState::Count)> usb_stream_state_names {{"stopped", "missing", "waiting", "running", "failed"}};
 
+// One direction's counters, as json() reports them. Any thread may read
+// them: every field comes from an atomic. `trim_ppm` is the output's drift
+// trim and 0 for the input.
+struct UsbStreamStats {
+    UsbStreamState state = UsbStreamState::Stopped;
+    unsigned rate = 0, channels = 0, bits = 0, buffered = 0, overflows = 0, underruns = 0, xruns = 0, opens = 0;
+    int trim_ppm = 0;
+};
+
 // What a computer plays to the MPC. start() opens nothing on the calling
 // thread: a separate thread finds the gadget, waits for the computer,
 // converts its stream to 44.1 kHz stereo float and hands it to the audio
@@ -58,6 +67,7 @@ public:
     unsigned rate() const { return stream_rate.load(std::memory_order_relaxed); }
     unsigned channels() const { return stream_channels.load(std::memory_order_relaxed); }
     unsigned bits() const { return stream_width.load(std::memory_order_relaxed) * 8; }
+    UsbStreamStats stats() const;
     std::string json() const;
 
 private:
@@ -101,6 +111,7 @@ public:
 
     UsbStreamState state() const { return UsbStreamState(current.load(std::memory_order_acquire)); }
     unsigned rate() const { return stream_rate.load(std::memory_order_relaxed); }
+    UsbStreamStats stats() const;
     std::string json() const;
 
 private:

@@ -7,6 +7,7 @@
 #include "demos/pad_touch/pad_touch.h"
 #include "demos/sequencer/sequencer.h"
 #include "demos/synth/synth.h"
+#include "demos/system/system.h"
 #include <atomic>
 #include <cstdint>
 
@@ -36,6 +37,9 @@ struct DemoState {
 
     // Step sequencer: the pattern, tempo, transport and live drum hits.
     seq::Shared seq;
+
+    // System dashboard: the panel shown and the latest hardware readings.
+    sysinfo::Shared system;
 
     std::atomic<Page> page {Page::Synth};
     std::atomic<unsigned> light_position {0}; // Light show position in ms; the MIDI thread writes it.

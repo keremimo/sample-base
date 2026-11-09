@@ -8,6 +8,7 @@
 #include "demos/light_show/light_show.h"
 #include "demos/sequencer/sequencer.h"
 #include "demos/synth/synth.h"
+#include "demos/system/system.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -66,6 +67,36 @@ SeqView preview_seq() {
     view.muted = 1u << unsigned(seq::Drum::Bell);
     view.hits = 1u << unsigned(seq::Drum::Clap) | 1u << unsigned(seq::Drum::ClosedHat);
     view.tempo = 1235; view.step = 6; view.track = uint8_t(seq::Drum::Clap); view.drums = true; view.armed = true;
+    return view;
+}
+
+// An MPC an hour into a session, recording over USB-C, with the readings
+// the device reports (a 3.59 V supply, a six-step backlight and the stock
+// mounts plus an SD card).
+SystemView preview_system(sysinfo::Panel panel) {
+    using namespace sysinfo;
+    SystemView view;
+    view.panel = panel;
+    auto& r = view.readings;
+    r.reads = 7200;
+    r.cpu = {0.18f, 0.12f, 0.09f, 0.11f, 0.41f};
+    for (unsigned n = 0; n < history_length; ++n) r.history.push(0.16f + 0.05f * std::sin(n * 0.45f) + (n % 11 == 3 ? 0.22f : 0));
+    r.memory_total_kb = 2018016; r.memory_available_kb = 1789172;
+    r.cpu_millidegrees = 39444; r.gpu_millidegrees = 37222;
+    r.supply_name = "mains-power"; r.supply_type = "Mains"; r.supply_online = 1; r.supply_microvolts = 3592000;
+    r.key_available = true; r.key_presses = 2;
+    r.backlight = 6; r.backlight_maximum = 6;
+    r.udc_state = "configured";
+    r.usb_in.state = UsbStreamState::Stopped;
+    r.usb_out = {UsbStreamState::Running, 48000, 2, 32, 1031, 0, 0, 0, 1, -21};
+    r.ports = {{"Control Surface", true, true, true}, {"External MIDI", true, true, false}, {"f_midi", true, true, false}};
+    r.headphones = 1; r.line_out = 0;
+    constexpr uint64_t mb = 1024 * 1024;
+    r.storage = {{"/", "ext4", true, 0, 360 * mb}, {"/content", "ext4", true, 412 * mb, 3900 * mb},
+                 {"/factory", "ext4", false, 27 * mb, 30 * mb}, {"/data", "ext4", false, 2600 * mb, 2980 * mb},
+                 {"/media/3265-3932", "exfat", false, 18400 * mb, 30500 * mb}};
+    view.frames = uint64_t(3725) * sample_rate;
+    view.capture_active = true; view.peak = 0.31f; view.input_peak = 0.05f;
     return view;
 }
 
@@ -135,6 +166,12 @@ int write_seq_preview(const std::string& png_path) {
     return write_preview(view, png_path);
 }
 
+int write_system_preview(const std::string& png_path, sysinfo::Panel panel) {
+    DemoView view; view.page = Page::System; view.system = preview_system(panel);
+    view.last_input = surface_buttons[size_t(SurfaceButton::KnobFx)].name;
+    return write_preview(view, png_path);
+}
+
 int write_pads_preview(const std::string& png_path) {
     DemoView view; view.page = Page::Pads; view.pads = preview_pads();
     view.last_pad = 5; view.velocity = 101; view.held = 1u << 5 | 1u << 10 | 1u << 1;
@@ -153,6 +190,12 @@ std::optional<int> run_demo_tool(int argc, char** argv) {
     if (tool("--preview-recorder", 2, 2)) return write_recorder_preview(argv[2]);
     if (tool("--preview-pads", 2, 2)) return write_pads_preview(argv[2]);
     if (tool("--preview-seq", 2, 2)) return write_seq_preview(argv[2]);
+    if (tool("--preview-system", 2, 3)) {
+        auto name = argc == 4 ? std::find(sysinfo::panel_names.begin(), sysinfo::panel_names.end(), std::string(argv[3]))
+                              : sysinfo::panel_names.begin();
+        require(name != sysinfo::panel_names.end(), "Unknown system panel; use health, audio, ports or storage");
+        return write_system_preview(argv[2], sysinfo::Panel(name - sysinfo::panel_names.begin()));
+    }
     if (tool("--preview-lights", 2, 3)) {
         // By default, mid-way through the rainbow.
         unsigned position = light_scene_start(3) + 1800;

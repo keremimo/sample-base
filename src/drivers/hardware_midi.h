@@ -13,6 +13,12 @@ struct MidiPortInfo {
     bool input = false, output = false, surface = false;
 };
 
+// The open ports and output losses, as the `midi` command reports them.
+struct MidiPorts {
+    std::vector<MidiPortInfo> ports; // `input` and `output` are the directions open now.
+    unsigned send_drops = 0, input_errors = 0;
+};
+
 // ALSA owns the UARTs and USB endpoints. Device numbers are discovered, never
 // assumed. All methods run on one control thread; no audio-thread scanning.
 class HardwareMidi {
@@ -31,6 +37,7 @@ public:
     void flush();
     bool has_surface() const;
     std::string json() const;
+    MidiPorts open_ports() const;
     std::vector<std::string> outputs() const;
 private:
     struct Port;

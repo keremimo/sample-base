@@ -230,6 +230,43 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(command("seq reset"), "OK seq reset")
                 reset = json.loads(command("seq")[3:])
                 self.assertEqual((reset["tempo"], reset["tracks"][1]["steps"][4], reset["tracks"][7]["muted"]), (110.0, 0, False))
+
+                # The system page reads the hardware on the service thread,
+                # only while it is open.
+                closed = json.loads(command("system")[3:])
+                self.assertEqual((closed["reads"], closed["panel"], closed["cpu"]), (0, "health", []))
+                self.assertEqual(command("page system"), "OK page system")
+                status_until("page=system")
+
+                def system(until):
+                    for _ in range(300):
+                        state = json.loads(command("system")[3:])
+                        if until(state):
+                            return state
+                        time.sleep(0.01)
+                    self.fail("system page never read: " + json.dumps(state))
+                # Two /proc/stat samples half a second apart give the loads: total, then each core.
+                state = system(lambda state: len(state["cpu"]) > 1)
+                self.assertTrue(all(0 <= load <= 1 for load in state["cpu"]), state["cpu"])
+                self.assertGreater(state["memory_total_kb"], 0)
+                self.assertLessEqual(state["memory_available_kb"], state["memory_total_kb"])
+                self.assertEqual(state["jacks"], {"headphones": -1, "line_out": -1})  # No I2S mixer here.
+                self.assertEqual(state["usb_in"]["state"], "stopped")
+                self.assertIn(state["usb_out"]["state"], ("missing", "waiting"))
+                self.assertEqual(state["power_key"]["presses"], 0)
+                self.assertEqual(state["midi"]["send_drops"], 0)
+                self.assertIsInstance(state["storage"], list)
+                self.assertEqual(command("system next"), "OK system audio")
+                self.assertEqual(command("system previous"), "OK system health")
+                self.assertEqual(command("system storage"), "OK system storage")
+                self.assertEqual(json.loads(command("system")[3:])["panel"], "storage")
+                for bad in ("system disk", "system next now", "system 2"):
+                    self.assertTrue(command(bad).startswith("ERR"), bad)
+                self.assertTrue(command("page synth").startswith("OK"))
+                status_until("page=synth")
+                reads = json.loads(command("system")[3:])["reads"]
+                time.sleep(0.7)
+                self.assertEqual(json.loads(command("system")[3:])["reads"], reads)
                 stream = subprocess.run([str(ROOT / "build/sample-base"), "--runtime-dir", str(runtime), "--ctl-stream"],
                                         input="status\nunknown\nsurface-log 0\n", capture_output=True, text=True, timeout=15)
                 replies = stream.stdout.splitlines()

@@ -9,11 +9,12 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Thirty-three regression tests pass on Linux ARM64. On macOS, twenty-three
+- Thirty-four regression tests pass on Linux ARM64. On macOS, twenty-four
   portable tests pass and ten Linux-specific tests are skipped. The build
-  also renders the recorder, light show, pad touch and sequencer page previews
-  `build/preview-recorder.png`, `build/preview-lights.png`,
-  `build/preview-pads.png` and `build/preview-seq.png`.
+  also renders the recorder, light show, pad touch, sequencer and system page
+  previews `build/preview-recorder.png`, `build/preview-lights.png`,
+  `build/preview-pads.png`, `build/preview-seq.png` and
+  `build/preview-system.png`.
 - Recorder fixtures cover L + R / L / R selection, mono microphone mixing,
   S16_LE, S24_3LE and S32_LE decoding and rounded, clipped encoding,
   44.1/48/32 kHz linear rate conversion both ways, a trimmed conversion
@@ -64,6 +65,19 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `seq tempo`, `seq step`, `seq mute`, `seq play`, `seq stop`, `seq reset`
   and their errors, and waits for the audio thread to play the kick and a
   snare written in, still playing on another page.
+- System page fixtures check panel stepping both ways, the CPU meter's
+  first sample, loads between samples and a restart when the CPU count
+  changes, the 24-second history clamped to 0–100 %, thermal zones found by
+  type, the supply that reports a voltage, memory and storage shares that
+  never pass full, and every piece of text the page shows (sizes, volts,
+  degrees, rates, drift, running time, jacks, the power key and USB states).
+  The headless app test checks that nothing is read before `page system`,
+  then waits for two `/proc/stat` samples, reads loads, memory, unknown
+  jacks, both USB-C directions, the power key and storage from `system`,
+  drives `system next|previous|PANEL` and its errors, and checks that reads
+  stop once the page closes. The USB-C fixture checks `stats()` in both
+  directions and the MIDI fixture the typed port list, dropped sends and a
+  failed port leaving it.
 - Control-map fixtures cover every measured button and control number,
   channel separation from pads, release by note-off or velocity zero, signed
   wheel steps, main-volume gain and the lossless surface log. A fake control
@@ -83,9 +97,18 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
 - Mock ALSA mixer controls verify exact channel counts, range checking,
   read-only controls, mutually exclusive input routes and restoration of
   the original stereo volume and route without briefly enabling both inputs.
+  Reading a jack or switch by name returns its value, and -1 for a missing
+  or non-boolean control or without the card.
 - Injected sysfs/proc fixtures cover power, missing battery capacity,
   backlight bounds/restoration, USB state, temperatures and mount decoding,
-  including spaces in mount paths and read-only mounts.
+  including spaces in mount paths and read-only mounts. The `/proc` reader
+  sums CPU time per core without counting guest time twice, accepts short
+  lines, computes loads between samples (none when no time passed or the
+  counters went back) and reads `MemAvailable`, falling back to `MemFree`.
+  The typed readers return the supply's type, `online` and voltage, every
+  thermal zone (not cooling devices), the backlight, the USB controller
+  state and each mounted device once, bind mounts left out, with the space
+  `statvfs()` reports; on a missing root they return nothing.
 - Mock GPIO requests verify opt-in sync access by line name, rejection of
   already-owned lines, timestamped rising/falling edges, loss detection and
   returning the output low on normal cleanup. Codec/reset GPIOs are not
@@ -173,6 +196,20 @@ exposes the UAC2 function while sample-base runs, the host's chosen format and
 long-session clock drift all need hardware confirmation. Saving takes,
 project storage, presets and sequences longer than one bar remain
 application work.
+
+The system page ran on the MPC from a RAM install, opened remotely with
+`page system` and stepped through its four panels with `system PANEL`; each
+device screenshot matched its preview's layout. It read a total CPU load of
+3 % (four cores, 2–6 % each), 233 MB of 1.9 GB memory used, `cpu-thermal`
+38.9 °C and `gpu-thermal` 37.2 °C, `mains-power` (Mains, online) at
+3.592 V, backlight 6 of 6, the power key with no presses, UDC `configured`,
+USB-C in off and out waiting with no computer recording, the Control
+Surface, External MIDI and `f_midi` ports open both ways with no drops,
+headphones plugged in and line out empty, and five mounts: `/` and
+`/content` read-only and full, `/factory`, `/data` and a 60 GB SD card. No
+playback or capture underruns occurred while it read. The Knob FX button,
+its light and wheel stepping use the same paths as the other pages but have
+not yet been pressed and looked at on the device.
 
 The step sequencer ran on the MPC from a RAM install. A four-second remote
 run at 110 BPM played the default groove on schedule (9 kicks, 4 claps, 17

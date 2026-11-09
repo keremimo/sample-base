@@ -13,5 +13,6 @@ DemoView ScreenFeed::frame(DemoState& state, const Session& session) {
     pad_trace.advance(state.pads, view.velocity);
     if (view.page == Page::Pads) view.pads = pad_trace.view(state.pads);
     view.seq = seq.frame(state, view.page == Page::Seq);
+    view.system = system_view(state, session, view.page == Page::System);
     return view;
 }

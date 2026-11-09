@@ -172,14 +172,19 @@ void UsbAudioInput::run(std::string requested) {
     close();
 }
 
+UsbStreamStats UsbAudioInput::stats() const {
+    return {state(), rate(), channels(), bits(), ring.buffered(), ring.overflows.load(), ring.underruns.load(), xruns.load(), opens.load(), 0};
+}
+
 std::string UsbAudioInput::json() const {
     std::string device;
     { std::lock_guard<std::mutex> lock(device_lock); device = device_name; }
+    auto now = stats();
     std::ostringstream out;
-    out << "{\"state\":" << json_string(usb_stream_state_names[size_t(state())]) << ",\"device\":" << json_string(device)
-        << ",\"rate\":" << rate() << ",\"channels\":" << channels() << ",\"bits\":" << bits()
-        << ",\"buffered\":" << ring.buffered() << ",\"overflows\":" << ring.overflows.load()
-        << ",\"underruns\":" << ring.underruns.load() << ",\"xruns\":" << xruns.load() << ",\"opens\":" << opens.load() << '}';
+    out << "{\"state\":" << json_string(usb_stream_state_names[size_t(now.state)]) << ",\"device\":" << json_string(device)
+        << ",\"rate\":" << now.rate << ",\"channels\":" << now.channels << ",\"bits\":" << now.bits
+        << ",\"buffered\":" << now.buffered << ",\"overflows\":" << now.overflows
+        << ",\"underruns\":" << now.underruns << ",\"xruns\":" << now.xruns << ",\"opens\":" << now.opens << '}';
     return out.str();
 }
 
@@ -308,14 +313,20 @@ void UsbAudioOutput::run(std::string requested) {
     close();
 }
 
+UsbStreamStats UsbAudioOutput::stats() const {
+    return {state(), rate(), stream_channels.load(), stream_width.load() * 8, ring.buffered(), ring.overflows.load(),
+            ring.underruns.load(), xruns.load(), opens.load(), trim_ppm.load()};
+}
+
 std::string UsbAudioOutput::json() const {
     std::string device, wanted;
     { std::lock_guard<std::mutex> lock(device_lock); device = device_name; wanted = requested_name; }
+    auto now = stats();
     std::ostringstream out;
-    out << "{\"state\":" << json_string(usb_stream_state_names[size_t(state())]) << ",\"requested\":" << json_string(wanted)
-        << ",\"device\":" << json_string(device) << ",\"rate\":" << rate() << ",\"channels\":" << stream_channels.load()
-        << ",\"bits\":" << stream_width.load() * 8 << ",\"buffered\":" << ring.buffered() << ",\"trim_ppm\":" << trim_ppm.load()
-        << ",\"overflows\":" << ring.overflows.load() << ",\"underruns\":" << ring.underruns.load()
-        << ",\"xruns\":" << xruns.load() << ",\"opens\":" << opens.load() << '}';
+    out << "{\"state\":" << json_string(usb_stream_state_names[size_t(now.state)]) << ",\"requested\":" << json_string(wanted)
+        << ",\"device\":" << json_string(device) << ",\"rate\":" << now.rate << ",\"channels\":" << now.channels
+        << ",\"bits\":" << now.bits << ",\"buffered\":" << now.buffered << ",\"trim_ppm\":" << now.trim_ppm
+        << ",\"overflows\":" << now.overflows << ",\"underruns\":" << now.underruns
+        << ",\"xruns\":" << now.xruns << ",\"opens\":" << now.opens << '}';
     return out.str();
 }

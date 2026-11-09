@@ -73,9 +73,12 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 - audio peaks and recoveries;
 - whether a remote prompt owns the screen.
 
-`Hardware` gives `service()` and `command()` the mixer, platform (backlight,
-power, temperatures), storage service and sync jacks. Anything else in
-`src/drivers/`, such as `UsbAudioInput`, an app can own itself.
+`Hardware` gives `service()` and `command()` the mixer (routes and jack
+detection), platform (backlight, power, temperatures, CPU load, memory and
+storage space), storage service and sync jacks, plus read-only views of the
+power key, the USB-C audio output and the MIDI ports as last scanned.
+Anything else in `src/drivers/`, such as `UsbAudioInput`, an app can own
+itself. The system demo (`src/demos/system/`) reads all of these.
 
 ## What the runtime already does
 
@@ -100,13 +103,15 @@ power, temperatures), storage service and sync jacks. Anything else in
 
 ## Examples
 
-`src/demos/` holds the five proofs of concept as one `DemoApp`, one folder
+`src/demos/` holds the six proofs of concept as one `DemoApp`, one folder
 each:
 - `synth/`: pads play C major, and external MIDI plays the same synth.
 - `recorder/`: record and play the line inputs, the microphone or USB-C audio.
 - `light_show/`: every surface light.
 - `pad_touch/`: pad velocity and pressure.
 - `sequencer/`: a one-bar step sequencer playing eight drums made in code.
+- `system/`: a dashboard of the MPC's live state, read on the service
+  thread only while its page is open.
 
 Each folder has the same three parts:
 - `<demo>.h`: the pure model that tests can include;

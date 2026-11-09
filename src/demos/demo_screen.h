@@ -4,6 +4,7 @@
 #include "demos/pad_touch/pad_touch_demo.h"
 #include "demos/recorder/recorder_demo.h"
 #include "demos/sequencer/sequencer_demo.h"
+#include "demos/system/system_demo.h"
 #include "demos/ui.h"
 #include <cstdint>
 #include <string>
@@ -22,6 +23,7 @@ struct DemoView {
     unsigned light_position = 0; // Milliseconds into the light show loop.
     PadsView pads;
     SeqView seq;
+    SystemView system;
 };
 
 // The page `view.page` names, over the whole screen.
@@ -33,3 +35,4 @@ void draw_recorder_page(juce::Graphics& g, const Ui& ui, const DemoView& view);
 void draw_light_show_page(juce::Graphics& g, const Ui& ui, const DemoView& view);
 void draw_pad_touch_page(juce::Graphics& g, const Ui& ui, const DemoView& view);
 void draw_sequencer_page(juce::Graphics& g, const Ui& ui, const DemoView& view);
+void draw_system_page(juce::Graphics& g, const Ui& ui, const DemoView& view);

@@ -46,7 +46,9 @@ int main() {
         assert(mixer.input("line") && values[2][0] == 0 && values[3][0] == 1);
         assert(!mixer.input("invalid"));
         assert(values[1][0] == 100 && values[1][1] == 101);
+        assert(mixer.switch_value("Headphone Jack") == 1 && mixer.switch_value("TRS Switch") == 1);
+        assert(mixer.switch_value("Playback Volume") == -1 && mixer.switch_value("Missing Jack") == -1);
     }
     assert(values[1][0] == 80 && values[1][1] == 81 && values[2][0] == 1 && values[3][0] == 0);
-    HardwareMixer absent("missing"); assert(!absent.available() && !absent.input("off"));
+    HardwareMixer absent("missing"); assert(!absent.available() && !absent.input("off") && absent.switch_value("Headphone Jack") == -1);
 }

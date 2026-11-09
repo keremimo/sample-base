@@ -86,6 +86,21 @@ bool HardwareMixer::input(const std::string& source) {
     if (!named_switch("Builtin Microphone Switch", false) || !named_switch("TRS Switch", false)) return false;
     return source == "off" || named_switch(source == "mic" ? "Builtin Microphone Switch" : "TRS Switch", true);
 }
+int HardwareMixer::switch_value(const char* name) const {
+    if (!ctl) return -1;
+    snd_ctl_elem_info_t* info; snd_ctl_elem_info_alloca(&info);
+    for (auto interface : {SND_CTL_ELEM_IFACE_CARD, SND_CTL_ELEM_IFACE_MIXER}) {
+        snd_ctl_elem_info_clear(info);
+        snd_ctl_elem_info_set_interface(info, interface);
+        snd_ctl_elem_info_set_name(info, name);
+        if (snd_ctl_elem_info(ctl, info) < 0) continue;
+        if (snd_ctl_elem_info_get_type(info) != SND_CTL_ELEM_TYPE_BOOLEAN || !snd_ctl_elem_info_is_readable(info)) return -1;
+        snd_ctl_elem_value_t* value; snd_ctl_elem_value_alloca(&value);
+        snd_ctl_elem_value_set_numid(value, snd_ctl_elem_info_get_numid(info));
+        return snd_ctl_elem_read(ctl, value) < 0 ? -1 : snd_ctl_elem_value_get_boolean(value, 0) ? 1 : 0;
+    }
+    return -1;
+}
 std::string HardwareMixer::json() const {
     if (!ctl) return "{\"available\":false,\"controls\":[]}";
     snd_ctl_elem_list_t* list; snd_ctl_elem_list_alloca(&list);

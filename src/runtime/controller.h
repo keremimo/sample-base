@@ -36,7 +36,7 @@ public:
     void run(Session& session, ControlServer& server);
 private:
     struct MidiSendRequest { std::array<char, 64> address {}; MidiPacket packet; };
-    struct MidiCatalog { std::string json; std::vector<std::string> outputs; };
+    struct MidiCatalog { std::string json; std::vector<std::string> outputs; MidiPorts ports; };
 
     // controller.cpp
     void run_midi(Session& session);
@@ -64,7 +64,6 @@ private:
     ClockIo clock;
     PowerButton power;
     SurfaceLights lights;
-    Hardware hardware {mixer, platform, services, clock}; // What App::service() and App::command() may use.
 
     // Surface diagnostics; the MIDI thread queues packets, the service thread keeps them.
     MidiQueue<256, MidiPacket> surface_events;
@@ -75,6 +74,9 @@ private:
     // MIDI ports as last scanned by the MIDI thread, copied for the service thread.
     MidiCatalog catalog;
     MidiQueue<4, MidiCatalog> catalog_updates;
+
+    // What App::service() and App::command() may use.
+    Hardware hardware {mixer, platform, services, clock, power, usb_output, catalog.ports};
 
     // Service thread asks, MIDI thread acts.
     MidiQueue<32, MidiSendRequest> midi_output;

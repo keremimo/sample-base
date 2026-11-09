@@ -6,6 +6,7 @@
 #include "demos/pad_touch/pad_touch_demo.h"
 #include "demos/recorder/recorder_demo.h"
 #include "demos/sequencer/sequencer_demo.h"
+#include "demos/system/system_demo.h"
 
 // Screen thread. Copies what the screen shows out of the shared state once
 // per frame (see DemoView). The recorder's refusal hint, the pad page's

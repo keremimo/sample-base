@@ -8,6 +8,7 @@
 #include "demos/screen_feed.h"
 #include "demos/sequencer/sequencer_demo.h"
 #include "demos/synth/synth.h"
+#include "demos/system/system_demo.h"
 #include "demos/ui.h"
 #include <memory>
 #include <string>
@@ -18,6 +19,7 @@
 //   light show  demos/light_show/  Pad FX: every surface light
 //   pad touch   demos/pad_touch/   16 Levels: velocity and pressure
 //   sequencer   demos/sequencer/   SEQ: step sequencer and drum machine
+//   system      demos/system/      Knob FX: the MPC's live state
 // DemoApp only routes: each runtime hook goes to the demos that use it, and
 // the page buttons choose which page shows.
 class DemoApp : public App {
@@ -51,6 +53,9 @@ private:
     RecorderLights recorder_lights;    // MIDI thread.
     SequencerInput seq_input;          // MIDI thread.
     SequencerLights seq_lights;        // MIDI thread.
+    SystemLights system_lights;        // MIDI thread.
+
+    SystemReader system_reader; // Service thread.
 
     std::unique_ptr<Ui> ui; // Screen thread; loads its font on the first frame.
     ScreenFeed feed;        // Screen thread.

@@ -164,6 +164,16 @@ std::string HardwareMidi::json() const {
     return out.str() + "]}";
 }
 
+MidiPorts HardwareMidi::open_ports() const {
+    MidiPorts result {{}, send_drops, input_errors};
+    for (const auto& port : ports) {
+        auto info = port->info;
+        info.input = port->input != nullptr; info.output = port->output != nullptr;
+        result.ports.push_back(info);
+    }
+    return result;
+}
+
 std::vector<std::string> HardwareMidi::outputs() const {
     std::vector<std::string> result;
     for (const auto& port : ports) if (port->output) result.push_back(port->info.address);

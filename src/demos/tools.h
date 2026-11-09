@@ -11,5 +11,7 @@
 //   --preview-lights FILE.png [MS]   the light show page at MS into the loop
 //   --preview-pads FILE.png          the pad touch page
 //   --preview-seq FILE.png           the step sequencer page
+//   --preview-system FILE.png [PANEL] the system page: health, audio, ports
+//                                    or storage
 // Returns the exit code, or nothing when argv names none of them.
 std::optional<int> run_demo_tool(int argc, char** argv);

@@ -63,11 +63,24 @@ flashes on the beat. **Mute** mutes the selected track and **Erase** clears it
 (**Shift + Erase** clears every track). The screen shows all eight tracks,
 the playhead, the tempo and the step playing.
 
+**System dashboard.** Press **Knob FX** for the MPC's live state on four
+panels; the left and middle buttons above the screen, or the wheel, step
+through them. *Health*: CPU load overall, per core and over the last 24
+seconds, memory, the CPU and GPU temperatures, the supply voltage, the power
+key and the backlight level. *Audio*: the audio engine's running time, output
+and input meters and recoveries, the USB-C port's state and USB-C audio in
+and out with their rates, underruns and drift trim. *Ports*: every open MIDI
+port and its directions, dropped messages, and whether headphones and line
+out are plugged in. *Storage*: each mounted device with its free space. The
+readings are taken twice a second, only while the page is open. Power shows
+as a voltage: the AC50 has no battery gauge, so there is no percentage. The
+right button above the screen (or **Knob FX** again) returns to the synth.
+
 Presets, sequences longer than one bar, saved patterns, project
 storage and saving takes are future work. The reusable base also supplies audio input, mixer and
 jack controls, USB-C audio to a computer (whatever the app plays), bidirectional MIDI and hotplug, pad/button/bank lights,
 display/backlight, sync GPIO,
-power telemetry, storage-service integration and session recovery.
+power, thermal, CPU and memory telemetry, storage-service integration and session recovery.
 See [docs/HARDWARE.md](docs/HARDWARE.md) for APIs, commands and reference wiring.
 
 ## Build
@@ -83,7 +96,7 @@ cd sample-base
 This builds Linux ARM64 binaries in a Debian container, runs the tests,
 renders a note and its release into `build/test.wav`, and creates
 `build/preview.png`, `build/preview-recorder.png`, `build/preview-lights.png`,
-`build/preview-pads.png` and `build/preview-seq.png`. The complete app is
+`build/preview-pads.png`, `build/preview-seq.png` and `build/preview-system.png`. The complete app is
 `build/sample-base`; no sound module, factory-preset bank or sibling checkout
 is needed.
 
@@ -102,6 +115,7 @@ build/sample-base --preview-recorder build/preview-recorder.png
 build/sample-base --preview-lights build/preview-lights.png [MS]
 build/sample-base --preview-pads build/preview-pads.png
 build/sample-base --preview-seq build/preview-seq.png
+build/sample-base --preview-system build/preview-system.png [health|audio|ports|storage]
 ```
 
 No offline mode opens the MPC's audio, display or control surface.
@@ -169,6 +183,7 @@ lights, commands and audio (`<demo>_demo`) and its screen
 | `light_show/` | **Pad FX**: the LED showcase |
 | `pad_touch/` | **16 Levels**: pad velocity and pressure |
 | `sequencer/` | **SEQ**: step sequencer and drum machine |
+| `system/` | **Knob FX**: the system dashboard |
 | `demo_app` | Routes the runtime's hooks to the demos and switches pages |
 | `demo_state.h` | What the demos share across threads |
 | `ui`, `demo_screen`, `screen_feed` | Shared look, per-frame view and page drawing |

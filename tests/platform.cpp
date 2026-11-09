@@ -49,6 +49,20 @@ int main(int argc, char** argv) {
                                   "32 20 179:1 / /mnt/internal ro - ext4 /dev/mmcblk0p1 rw\n"
                                   "33 20 0:1 / /proc rw - proc proc rw\nmalformed\n");
     assert(mounts.size() == 2 && mounts[0].path == "/media/My SD" && !mounts[0].read_only && mounts[1].read_only);
+    // /proc readers: guest time is already in user; a short line still counts.
+    auto cpus = parse_proc_stat("cpu  100 5 50 800 20 3 2 0 7 0\ncpu0 60 5 30 400 10 2 1 0 0 0\n"
+                                "cpu1 40 0 20 400 10 1 1 0\ncpu2 10 0 10 80\ncpu3 1 2\nintr 1 2 3\n");
+    assert(cpus.size() == 4);
+    assert(cpus[0].busy == 160 && cpus[0].total == 980 && cpus[1].busy == 98 && cpus[1].total == 508);
+    assert(cpus[2].busy == 62 && cpus[2].total == 472 && cpus[3].busy == 20 && cpus[3].total == 100);
+    assert(cpu_load({160, 980}, {260, 1180}) == 0.5 && cpu_load(cpus[0], cpus[0]) == 0);
+    assert(cpu_load({260, 1180}, {160, 980}) == 0 && cpu_load({0, 100}, {300, 200}) == 1);
+    auto memory = parse_meminfo("MemTotal:        2018016 kB\nMemFree:         1586332 kB\nMemAvailable:    1789172 kB\n");
+    assert(memory.total_kb == 2018016 && memory.available_kb == 1789172);
+    memory = parse_meminfo("MemTotal: 1000 kB\nMemFree: 250 kB\nbroken\n");
+    assert(memory.total_kb == 1000 && memory.available_kb == 250);
+    memory = parse_meminfo("");
+    assert(memory.total_kb == 0 && memory.available_kb == 0);
     assert(json_string("a\"b\\c\n\x01") == "\"a\\\"b\\\\c\\u000a\\u0001\"");
     write(root / "sys/class/power_supply/mains-power/type", "Mains\n");
     write(root / "sys/class/power_supply/mains-power/online", "1\n");
@@ -58,17 +72,44 @@ int main(int argc, char** argv) {
     write(root / "sys/class/udc/controller/state", "configured\n");
     write(root / "sys/class/thermal/thermal_zone0/type", "soc-thermal\n");
     write(root / "sys/class/thermal/thermal_zone0/temp", "42000\n");
+    write(root / "sys/class/thermal/thermal_zone1/type", "gpu-thermal\n");
+    write(root / "sys/class/thermal/thermal_zone1/temp", "-1500\n");
+    write(root / "sys/class/thermal/cooling_device0/type", "fan\n");
     write(root / "proc/self/mountinfo", "31 20 8:1 / /media/SD rw - exfat /dev/sda1 rw\n");
+    write(root / "proc/stat", "cpu  100 5 50 800 20 3 2 0 0 0\ncpu0 100 5 50 800 20 3 2 0 0 0\n");
+    write(root / "proc/meminfo", "MemTotal: 4096 kB\nMemAvailable: 1024 kB\n");
     {
         Platform platform(root / "sys", root / "proc");
         std::string json = platform.json();
         assert(json.find("5000000") != std::string::npos && json.find("configured") != std::string::npos);
         assert(json.find("capacity") == std::string::npos); // No invented battery percentage.
         assert(json.find("/media/SD") != std::string::npos && json.find("42000") != std::string::npos);
+        auto supplies = platform.supplies();
+        assert(supplies.size() == 1 && supplies[0].name == "mains-power" && supplies[0].type == "Mains");
+        assert(supplies[0].online == 1 && supplies[0].microvolts == 5000000);
+        auto zones = platform.temperatures();
+        assert(zones.size() == 2 && zones[0].type == "soc-thermal" && zones[0].millidegrees == 42000);
+        assert(zones[1].type == "gpu-thermal" && zones[1].millidegrees == -1500);
+        auto backlight = platform.backlight();
+        assert(backlight.brightness == 4 && backlight.maximum == 6 && platform.usb_state() == "configured");
+        auto cpus = platform.cpu_times();
+        assert(cpus.size() == 2 && cpus[1].busy == 160 && cpus[1].total == 980);
+        assert(platform.memory().total_kb == 4096 && platform.memory().available_kb == 1024);
         assert(!platform.brightness(7) && platform.brightness(2));
+        assert(platform.backlight().brightness == 2);
+        // Each device once, its bind mounts left out, with the space statvfs reports.
+        write(root / "proc/self/mountinfo", "31 20 8:1 / " + root.string() + " rw - ext4 /dev/sda1 rw\n"
+              "32 20 8:1 /sub /mnt/bind rw - ext4 /dev/sda1 rw\n33 20 8:2 / /missing ro - ext4 /dev/sdb1 ro\n");
+        auto storage = platform.storage();
+        assert(storage.size() == 2 && storage[0].path == root.string() && !storage[0].read_only);
+        assert(storage[0].total_bytes > 0 && storage[0].free_bytes <= storage[0].total_bytes);
+        assert(storage[1].device == "/dev/sdb1" && storage[1].read_only && storage[1].total_bytes == 0);
     }
     std::string restored; std::ifstream(root / "sys/class/backlight/panel/brightness") >> restored;
     assert(restored == "4");
     Platform absent(root / "missing", root / "missing");
     assert(!absent.brightness(1) && absent.json().find("\"power\":[]") != std::string::npos);
+    assert(absent.supplies().empty() && absent.temperatures().empty() && absent.storage().empty() && absent.cpu_times().empty());
+    assert(absent.backlight().brightness == -1 && absent.backlight().maximum == -1 && absent.usb_state().empty());
+    assert(absent.memory().total_kb == 0);
 }
