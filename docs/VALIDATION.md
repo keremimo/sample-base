@@ -230,6 +230,13 @@ two changes, `status` read `headphones=0 line_out=0`, and no playback or
 capture underruns occurred. What reaches the ears on each jack, and the
 speaker while they are plugged, was not checked.
 
+A second guided run checked the two line-out jacks, with each step
+confirmed by pad 1. With every cable out, line out read 0. One cable in L
+alone read 1; moved to R alone it went 0, then 1 as it went in; adding a
+second cable in L kept it at 1; pulling both brought it back to 0 in one
+change. Either jack alone trips the single line-out detect line, and
+headphones never moved during the run.
+
 The step sequencer ran on the MPC from a RAM install. A four-second remote
 run at 110 BPM played the default groove on schedule (9 kicks, 4 claps, 17
 closed and 8 open hats) with no playback or capture underruns and no dropped

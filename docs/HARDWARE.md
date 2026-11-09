@@ -227,6 +227,14 @@ each a jack: it debounces the GPIO for 150 ms, the ASoC jack core powers the
 as the read-only boolean card control `Headphones Jack` or `Line Out Jack`.
 Line in (`TRS`), the sync jacks and the MIDI jacks have no detection switch.
 
+Line out is two separate jacks, L and R, but the device tree has only one
+line-out detect line. Measured on the device: a cable in L alone, in R
+alone, or in both reads plugged, and line out reads empty only once both are
+out. The two jacks' switches therefore act as one, and `Line Out Jack` (and
+`Jack::LineOut`) means "L, R or both are plugged in". Nothing can tell which
+jack is used, so an app cannot decide from detection whether to send a mono
+sum to a single cable.
+
 `JackDetect` ([src/drivers/jacks.h](../src/drivers/jacks.h)) opens its own
 control handle on the card and subscribes to its events, so the mixer's
 handle never fills with events and the controls are read only when the card

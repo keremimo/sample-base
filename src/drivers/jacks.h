@@ -9,8 +9,10 @@
 // The two jacks the AC50 can tell are plugged. Its device tree gives the I2S
 // card `simple-audio-card,hp-det-gpio` (GPIO3_B0) and `out-det-gpio`
 // (GPIO3_B1); the kernel debounces each for 150 ms, powers the matching DAPM
-// pin and reports it as a read-only boolean card control. Line in, the sync
-// jacks and the MIDI jacks have no detection switch.
+// pin and reports it as a read-only boolean card control. Line out is two
+// jacks, L and R, on that one detect line: measured on the device, either
+// jack alone reads plugged, so LineOut means "L, R or both", never which.
+// Line in, the sync jacks and the MIDI jacks have no detection switch.
 enum class Jack : uint8_t { Headphones, LineOut };
 constexpr unsigned jack_count = 2;
 struct JackInfo { const char* key; const char* label; const char* control; };
