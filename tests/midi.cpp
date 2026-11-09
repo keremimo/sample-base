@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+#include "controls.h"
 #include "midi.h"
 #include <cassert>
 #include <vector>
@@ -42,4 +43,59 @@ int main() {
     assert(queue.pop(event) && event.key == 60 && event.status == 0x80);
     assert(queue.pop(event) && event.key == 64 && event.status == 0x80);
     assert(!queue.pop(event));
+
+    // Calibration reads every surface packet in order and detects lost history.
+    SurfaceLog<4> log;
+    std::vector<uint64_t> seen;
+    auto collect = [&](const SurfaceLog<4>::Entry& entry) { seen.push_back(entry.sequence); };
+    assert(log.newest() == 0 && log.read(0, 8, collect) == 0 && seen.empty());
+    for (uint8_t value = 1; value <= 3; ++value) {
+        MidiPacket packet; packet.timestamp_ns = value * 10u; packet.size = 3;
+        packet.bytes = {0xb0, 16, value};
+        log.push(packet);
+    }
+    assert(log.read(0, 2, collect) == 2 && seen == std::vector<uint64_t>({1, 2}));
+    assert(log.read(2, 8, [&](const SurfaceLog<4>::Entry& entry) {
+        assert(entry.sequence == 3 && entry.timestamp_ns == 30 && entry.size == 3 && entry.bytes[2] == 3);
+    }) == 3);
+    MidiPacket sysex; sysex.size = 20;
+    for (unsigned n = 0; n < sysex.size; ++n) sysex.bytes[n] = uint8_t(n);
+    for (int n = 0; n < 3; ++n) log.push(sysex);
+    assert(log.newest() == 6 && log.oldest() == 3);
+    seen.clear();
+    assert(log.read(1, 8, collect) == 6 && seen == std::vector<uint64_t>({3, 4, 5, 6}));
+    log.read(5, 1, [&](const SurfaceLog<4>::Entry& entry) {
+        assert(entry.size == 20 && entry.bytes[15] == 15);
+    });
+    assert(log.read(9, 8, collect) == 9); // A stale cursor waits rather than rewinding.
+
+    // Measured channel-1 button notes, in SurfaceButton order.
+    const uint8_t buttons[] = {6,7,1,0,49,35,9,11, 12,13,14, 75,43,74,40,36,53,55,54, 73,80,81,82,111};
+    static_assert(sizeof(buttons) == size_t(SurfaceButton::Count), "every button is measured");
+    for (unsigned n = 0; n < surface_buttons.size(); ++n) {
+        assert(surface_buttons[n].number == buttons[n]);
+        for (unsigned other = n + 1; other < surface_buttons.size(); ++other) assert(buttons[other] != buttons[n]);
+        auto down = surface_input({0x90, buttons[n], 127}), up = surface_input({0x80, buttons[n], 0});
+        assert(is_button(down, SurfaceButton(n)) && down.pressed && is_button(up, SurfaceButton(n)) && !up.pressed);
+        assert(!surface_input({0x90, buttons[n], 0}).pressed);              // velocity-zero release
+        assert(surface_input({0x99, buttons[n], 127}).kind == SurfaceInput::Kind::None); // channel 10 is pads
+        assert(describe_last_input(pack_last_input(down)) == surface_buttons[n].name);
+    }
+    // Shared numbers stay separate: channel 1 is a button, channel 10 a pad.
+    assert(is_button(surface_input({0x90,36,127}), SurfaceButton::SampleSelect) && pad_index({0x90,36,127}) == -1);
+    assert(pad_index({0x99,82,127}) == 3 && surface_input({0x99,82,127}).kind == SurfaceInput::Kind::None);
+    assert(surface_input({0xb0,111,127}).kind == SurfaceInput::Kind::None); // Push is a note, not CC 111.
+
+    const uint8_t controls[] = {19,16,17,18,20,100};
+    for (unsigned n = 0; n < surface_controls.size(); ++n) assert(surface_controls[n].number == controls[n]);
+    auto k2 = surface_input({0xb0,17,64});
+    assert(is_control(k2, SurfaceControl::K2) && k2.value == 64 && k2.delta == 0);
+    assert(describe_last_input(pack_last_input(k2)) == "K2 64");
+    assert(is_control(surface_input({0xb0,20,127}), SurfaceControl::Fader));
+    assert(surface_input({0xb1,17,64}).kind == SurfaceInput::Kind::None);
+    auto right = surface_input({0xb0,100,1}), left = surface_input({0xb0,100,127}), fast = surface_input({0xb0,100,125});
+    assert(is_control(right, SurfaceControl::Wheel) && right.delta == 1 && left.delta == -1 && fast.delta == -3);
+    assert(describe_last_input(pack_last_input(left)) == "Wheel -1" && describe_last_input(pack_last_input(right)) == "Wheel +1");
+    assert(describe_last_input(pack_last_input(InputKind::Power, 0, 1)) == "Power" && describe_last_input(0).empty());
+    assert(main_volume_gain(0) == 0.0f && main_volume_gain(127) == 1.0f && main_volume_gain(64) < 0.26f);
 }

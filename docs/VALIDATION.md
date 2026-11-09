@@ -9,8 +9,15 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   `-Wall -Wextra -Werror`. The build renders a two-second stereo WAV and the
   320 × 240 JUCE preview. Audio peak: `0.0228731`; RMS: `0.00846634`;
   final-half-second RMS: `0`.
-- Sixteen regression tests pass on Linux ARM64. On macOS, nine portable
-  tests pass and seven Linux-specific tests are skipped.
+- Twenty-two regression tests pass on Linux ARM64. On macOS, fourteen
+  portable tests pass and eight Linux-specific tests are skipped.
+- Control-map fixtures cover every measured button and control number,
+  channel separation from pads, release by note-off or velocity zero, signed
+  wheel steps, main-volume gain and the lossless surface log. A fake control
+  socket drives the guided capture through next, redo, back, empty-step
+  confirmation, mixer comparison and power-key steps. An injected evdev
+  fixture covers power-key discovery, press/release, autorepeat and
+  monotonic timestamps.
 - Native MIDI fixtures cover running status, fragmented reads, realtime
   interleaving, system-common messages, bounded SysEx, malformed messages,
   note/pressure/CC surface state, queue wrap-around and overflow notification.
@@ -53,17 +60,21 @@ The owner found that the original sequential pad-order assumption was wrong.
 A live capture of pads 1–16 in printed-number order established the explicit
 channel-10 map now recorded in `src/pads.h`; raw captures remain ignored.
 The corrected note order still needs the owner's physical confirmation after
-installation. Source references and offline tests do not qualify every
+installation. A guided on-screen capture then measured all 24 surface buttons
+(including wheel Push), the main volume, K1–K3, wheel and fader, plus the power
+key. Each step was recorded with no lost packets; the owner performed every
+gesture on the device. Results are in `src/controls.h` and `docs/HARDWARE.md`.
+The main volume knob changed no ALSA mixer control. Source references and offline tests do not qualify every
 electrical route, latency, sound or device interoperability.
 
 Physical pad/knob/button response, LED protocols, listening, microphone/line
 selection, headphone/speaker behavior, USB and TRS MIDI, USB PCM formats,
 backlight changes, sync jacks, storage removal, suspend/resume, wheel return,
 crash restoration and sustained full-polyphony/underrun behavior require
-hardware confirmation. The pad map is now measured; wheel Push behavior comes
-from the initial
-proof of concept. The public reference establishes the underlying transports,
-not the complete surface microcontroller protocol.
+hardware confirmation. The pad and control maps are measured, but the
+on-screen control names and main-volume level have not yet been confirmed by
+looking and listening. The public reference establishes the underlying
+transports, not the complete surface microcontroller protocol.
 
 The base supplies raw surface output but does not invent LED colour,
 calibration or battery commands. It reports available supply telemetry

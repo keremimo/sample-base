@@ -91,6 +91,40 @@ struct SurfaceState {
     }
 };
 
+// Lossless recent history of surface packets for diagnostics and calibration.
+// Owned by the control thread. Sequence numbers start at 1; a reader that
+// falls more than Size entries behind sees the gap between its cursor and
+// the first sequence returned. Packets longer than 16 bytes keep their real
+// size but only their first 16 bytes.
+template <unsigned Size = 1024> class SurfaceLog {
+    static_assert(Size >= 1, "A log needs an entry");
+public:
+    struct Entry {
+        uint64_t sequence = 0, timestamp_ns = 0;
+        unsigned size = 0;
+        std::array<uint8_t, 16> bytes {};
+    };
+    void push(const MidiPacket& packet) {
+        auto& entry = entries[latest % Size];
+        entry.sequence = ++latest;
+        entry.timestamp_ns = packet.timestamp_ns;
+        entry.size = packet.size;
+        for (unsigned n = 0; n < entry.bytes.size(); ++n) entry.bytes[n] = n < packet.size ? packet.bytes[n] : 0;
+    }
+    uint64_t newest() const { return latest; }
+    uint64_t oldest() const { return latest > Size ? latest - Size + 1 : 1; }
+    // Visits at most `limit` entries newer than `after`, oldest first, and
+    // returns the cursor for the next read.
+    template <class Visit> uint64_t read(uint64_t after, unsigned limit, Visit visit) const {
+        uint64_t sequence = after + 1 > oldest() ? after + 1 : oldest();
+        for (unsigned n = 0; n < limit && sequence <= latest; ++n, ++sequence) visit(entries[(sequence - 1) % Size]);
+        return sequence - 1 > after ? sequence - 1 : after;
+    }
+private:
+    std::array<Entry, Size> entries {};
+    uint64_t latest = 0;
+};
+
 // One control producer and one audio consumer. Overflow requests a panic;
 // a lost note-off must never leave a sustained voice sounding.
 template <unsigned Size = 256, class Event = MidiEvent> class MidiQueue {

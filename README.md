@@ -6,8 +6,9 @@ boops without running or injecting into the stock MPC application.
 
 The proof of concept has 16 velocity-sensitive pads mapped to C major from
 C4 to D6, a 16-voice sine/triangle synth, a pad display and an output meter.
-**Push the wheel to return to the stock app.** The synth has a short attack
-and release and fixed output gain. Presets, knobs, recording, sequencing,
+**Push the wheel to return to the stock app.** The main volume knob sets the
+synth's output level, and the screen names the last button, knob or power
+press. The synth has a short attack and release. Presets, recording, sequencing,
 project storage and USB audio bridging are future work. External MIDI now
 plays the demo synth. The reusable base also supplies audio input, mixer and
 jack controls, bidirectional MIDI and hotplug, display/backlight, sync GPIO,
@@ -90,8 +91,10 @@ python3 device.py start --seconds 45
 - **ALSA raw MIDI** discovers and opens the surface, external and USB ports
   in both directions. Full packets, realtime and SysEx are supported.
   The control surface is read directly. Pads use the measured, nonsequential
-  channel-10 map in `src/pads.h`; wheel Push is control 111. Running status,
-  split reads, realtime
+  channel-10 map in `src/pads.h`. Every other button, knob, the wheel and the
+  fader use the measured channel-1 map in `src/controls.h`; wheel Push is
+  note 111. The power button is the PMIC `KEY_POWER` input device.
+  Running status, split reads, realtime
   bytes and note-on velocity-zero releases are handled. Queue overflow
   clears pending events and silences voices rather than losing a note-off.
 - **Built-in synth** mixes sine and triangle oscillators with velocity and

@@ -121,8 +121,17 @@ exit; crash recovery returns ownership to the existing stock service.
 by `midi`. For example, `midi-send hw:2,0,0 90 3c 64` sends C4 only if that
 exact discovered port is currently available; use the actual address from
 your inventory. `surface` reports the last raw message, note, pressure and CC
-state. Non-pad buttons, knobs and faders are available through their raw
-messages without assigning unverified product-specific labels.
+state. Measured button, knob, wheel and fader names are in `src/controls.h`.
+
+`surface-log [SEQUENCE]` returns up to 256 retained surface packets newer
+than the sequence, oldest first, with receipt timestamps and a `next` cursor;
+the last 1,024 packets are retained. `power` reports the power key.
+`prompt HEADER|TITLE|DETAIL|STATUS|FOOTER` replaces the instrument screen
+with instructions until an empty `prompt` clears it. `push-exit on|off`
+controls the wheel Push shortcut; remote stop, the session deadline and crash
+recovery are unaffected. `sample-base --ctl-stream` reads one command per
+stdin line and prints one reply per line, so one SSH session can drive an
+interactive tool.
 
 `storage-mount OBJECT` and `storage-unmount OBJECT` use the `object` returned
 by `storage`, not a disk path or shell command. Requests go to
@@ -159,8 +168,49 @@ printed-number order. Their channel-10 note numbers are:
 `src/pads.h` is the shared map for routing and screen labels; pad 1 plays C4,
 pad 2 D4, through pad 16 D6. Note-off, velocity-zero release and polyphonic
 pressure use the same physical map. The earlier sequential 36–51 assumption
-was incorrect. Wheel Push behavior is separate from this note mapping.
-This changes note routing, not sensor sensitivity or factory calibration.
+was incorrect. This changes note routing, not sensor sensitivity or factory
+calibration.
+
+### Buttons, knobs, wheel, fader and power
+
+`tools/capture_controls.py` measured every other control with a guided
+on-screen capture: pads 1, 2 and 3 move to the next step, redo it or go back,
+and every packet in between is read losslessly through `surface-log`.
+`src/controls.h` is the shared map; `surface_input()` decodes an event into a
+named button or control. All of these use MIDI channel 1, so a channel-1 note
+whose number matches a pad note is a button, not a pad.
+
+| Control | Message |
+| --- | --- |
+| Main volume | CC 19, absolute 0–127 |
+| K1 / K2 / K3 | CC 16 / 17 / 18, absolute 0–127 |
+| Fader | CC 20, absolute 0–127 |
+| Wheel | CC 100, relative: 1 = one step right, 127 = one step left |
+| Wheel push | Note 111 |
+| Left: Sample, SEQ, Pad FX, Knob FX | Notes 6, 7, 1, 0 |
+| Left: Shift, Pad Bank, Erase, Note Repeat | Notes 49, 35, 9, 11 |
+| Above screen: left, middle, right | Notes 12, 13, 14 |
+| Right: Chop, Mute, Loop, 16 Levels | Notes 75, 43, 74, 40 |
+| Right: Sample Select, Tap Tempo, −, + | Notes 36, 53, 55, 54 |
+| Right: Sample Record, Seq Record, Stop, Play | Notes 73, 80, 81, 82 |
+| Power | `KEY_POWER` on the `rk805 pwrkey` evdev device, not MIDI |
+
+Buttons send note-on velocity 127 when pressed and note-off velocity 0 when
+released. The knobs and fader report absolute positions only when they move;
+the wheel sent one message per detent in the capture, and larger relative
+steps are decoded as signed 7-bit values. No touch-sensing messages were
+observed. Main volume changed no ALSA mixer control: it is surface MIDI only,
+so the demo maps it to software output gain with a squared taper. The gain
+stays at its previous value until the knob first moves.
+
+The power button is read from `/dev/input/eventN` by device name, shared and
+never grabbed. On 1.3.0.12 logind is not running and the vendor power-button
+udev rule matches only a `gpio-keys` device, so nothing else acts on a short
+press while sample-base runs. A long hold may still trigger the power
+management chip's own hardware power-off. `ctl power` reports availability,
+press count, current state and a monotonic timestamp; the demo only displays
+the press and never shuts down. During `capture_controls.py`, `push-exit off`
+temporarily disables the wheel Push shortcut so it can be measured.
 
 The AC50 source describes supply voltage, not a battery percentage gauge.
 Only attributes actually present are reported. In particular, missing battery

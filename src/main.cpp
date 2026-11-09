@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "display.h"
+#include "controls.h"
 #include "midi.h"
 #include "screen.h"
 #include "synth.h"
@@ -8,6 +9,7 @@
 #include "hardware_midi.h"
 #include "mixer.h"
 #include "platform.h"
+#include "power_button.h"
 #include "system_services.h"
 #include <alsa/asoundlib.h>
 #include <sys/socket.h>
@@ -33,6 +35,7 @@
 #include <charconv>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <sstream>
 
 namespace {
@@ -44,11 +47,14 @@ struct Shared {
     MidiQueue<> queue;
     AudioStats audio;
     std::atomic<bool> running {true}, failed {false}, screenshot {false};
-    std::atomic<uint32_t> held {0}, last_midi {0};
+    std::atomic<uint32_t> held {0}, last_midi {0}, last_input {0};
     std::atomic<int> last_pad {-1}, velocity {0};
     std::atomic<unsigned> hardware_events {0}, external_events {0}, synthetic_events {0}, overruns {0}, clocks {0};
     std::atomic<float> gain {1}, monitor {0};
     std::atomic<unsigned> midi_send_errors {0};
+    std::atomic<bool> push_exit {true};
+    std::mutex prompt_lock; // Control thread writes, screen thread copies.
+    std::string prompt;
 };
 struct RenderContext { Shared& state; Synth& synth; };
 void render_audio(void* pointer, const AudioBlock& input, AudioBlock& output) {
@@ -67,7 +73,7 @@ void render_audio(void* pointer, const AudioBlock& input, AudioBlock& output) {
         output[i] = int32_t(std::clamp(sample, -0.99, 0.99) * 2147483647.0);
     }
 }
-bool unsigned_value(const std::string& text, unsigned& value) {
+template <class Integer> bool unsigned_value(const std::string& text, Integer& value) {
     if (text.empty()) return false;
     auto result = std::from_chars(text.data(), text.data() + text.size(), value);
     return result.ec == std::errc() && result.ptr == text.data() + text.size();
@@ -77,12 +83,12 @@ std::string status(const Shared& state) {
     char reply[1024];
     snprintf(reply, sizeof(reply), "OK frames=%llu sounding_blocks=%llu hardware_events=%u external_events=%u synthetic_events=%u "
              "held=%04x last_pad=%d velocity=%d last_midi=%06x peak=%.6f input_peak=%.6f capture_frames=%llu capture_active=%u "
-             "xruns=%u capture_xruns=%u queue_overruns=%u clocks=%u gain=%.2f monitor=%.2f",
+             "xruns=%u capture_xruns=%u queue_overruns=%u clocks=%u gain=%.2f monitor=%.2f push_exit=%u",
              static_cast<unsigned long long>(state.audio.frames.load()), static_cast<unsigned long long>(state.audio.sounding_blocks.load()),
              state.hardware_events.load(), state.external_events.load(), state.synthetic_events.load(), state.held.load(), state.last_pad.load() + 1,
              state.velocity.load(), state.last_midi.load(), double(state.audio.peak.load()), double(state.audio.input_peak.load()),
              static_cast<unsigned long long>(state.audio.capture_frames.load()), unsigned(state.audio.capture_active.load()),
-             state.audio.xruns.load(), state.audio.capture_xruns.load(), state.overruns.load(), state.clocks.load(), double(state.gain.load()), double(state.monitor.load()));
+             state.audio.xruns.load(), state.audio.capture_xruns.load(), state.overruns.load(), state.clocks.load(), double(state.gain.load()), double(state.monitor.load()), unsigned(state.push_exit.load()));
     return reply;
 }
 std::string surface_json(const SurfaceState& state) {
@@ -95,6 +101,22 @@ std::string surface_json(const SurfaceState& state) {
     out << ",\"last\":[";
     for (unsigned i = 0; i < state.last.size; ++i) { if (i) out << ','; out << unsigned(state.last.bytes[i]); }
     return out.str() + "]}";
+}
+// Entries are [sequence, timestamp_ns, size, [bytes]]. `next` is the cursor
+// for the following request; a first sequence above since+1 means lost history.
+template <unsigned Size> std::string surface_log_json(const SurfaceLog<Size>& log, uint64_t since, unsigned overflows) {
+    std::ostringstream out; out << "{\"oldest\":" << log.oldest() << ",\"newest\":" << log.newest()
+        << ",\"diagnostic_overflows\":" << overflows << ",\"packets\":[";
+    bool first = true;
+    auto next = log.read(since, 256, [&](const typename SurfaceLog<Size>::Entry& entry) {
+        if (!first) out << ',';
+        first = false;
+        out << '[' << entry.sequence << ',' << entry.timestamp_ns << ',' << entry.size << ",[";
+        for (unsigned n = 0; n < entry.size && n < entry.bytes.size(); ++n) { if (n) out << ','; out << unsigned(entry.bytes[n]); }
+        out << "]]";
+    });
+    out << "],\"next\":" << next << '}';
+    return out.str();
 }
 
 struct MidiSendRequest { std::array<char, 64> address {}; MidiPacket packet; };
@@ -130,10 +152,11 @@ public:
                     for (unsigned n = 0; n < 256 && surface_events.pop(packet); ++n) {}
                     surface = {}; ++surface_overflows;
                 }
-                for (unsigned n = 0; n < 256 && surface_events.pop(packet); ++n) surface.apply(packet);
+                for (unsigned n = 0; n < 256 && surface_events.pop(packet); ++n) { surface.apply(packet); surface_log.push(packet); }
                 MidiCatalog update;
                 while (catalog_updates.pop(update)) catalog = std::move(update);
                 clock.poll(); services.poll();
+                if (power.poll()) state.last_input.store(pack_last_input(InputKind::Power, 0, power.pressed()));
                 if (services.stopping()) state.running.store(false);
                 pollfd ready {fd, POLLIN, 0};
                 int result = poll(&ready, 1, 5);
@@ -167,8 +190,10 @@ private:
                         if (packet.size >= 2 && packet.bytes[0] < 0xf0) {
                             MidiEvent event {packet.bytes[0], packet.bytes[1], packet.size == 3 ? packet.bytes[2] : uint8_t(0)};
                             state.last_midi.store((unsigned(event.status) << 16) | (unsigned(event.key) << 8) | event.value);
-                            unsigned kind = event.status & 0xf0;
-                            if (event.key == 111 && event.value && (kind == 0x90 || kind == 0xb0)) { state.running.store(false); return; }
+                            auto input = surface_input(event);
+                            if (is_button(input, SurfaceButton::WheelPush) && input.pressed && state.push_exit.load()) { state.running.store(false); return; }
+                            if (is_control(input, SurfaceControl::MainVolume)) state.gain.store(main_volume_gain(input.value));
+                            if (input.kind == SurfaceInput::Kind::Control || input.pressed) state.last_input.store(pack_last_input(input));
                             route(state, event);
                         }
                     } else {
@@ -211,11 +236,28 @@ private:
             audition_requested.store(true); return "OK audition C4";
         }
         if (action == "clock" && argument.empty()) return "OK " + clock.json();
+        if (action == "power" && argument.empty()) return "OK " + power.json();
         if (action == "clock-in" && (argument == "on" || argument == "off"))
             return clock.input(argument == "on") ? "OK sync input updated" : "ERR sync input unavailable";
         if (action == "clock-out" && (argument == "0" || argument == "1"))
             return clock.output(argument == "1") ? "OK sync output updated" : "ERR sync output unavailable";
         if (action == "surface" && argument.empty()) return "OK {\"diagnostic_overflows\":" + std::to_string(surface_overflows) + ",\"state\":" + surface_json(surface) + '}';
+        if (action == "surface-log") {
+            uint64_t since = 0;
+            if (!argument.empty() && !unsigned_value(argument, since)) return "ERR use surface-log [SEQUENCE]";
+            return "OK " + surface_log_json(surface_log, since, surface_overflows);
+        }
+        // Calibration needs every control, including wheel Push. Remote stop,
+        // the session deadline and crash recovery still return to stock.
+        if (action == "push-exit" && (argument == "on" || argument == "off")) {
+            state.push_exit.store(argument == "on"); return "OK push-exit " + argument;
+        }
+        if (action == "prompt") {
+            if (argument.size() > 400 || std::any_of(argument.begin(), argument.end(), [](char c) { return static_cast<unsigned char>(c) < 0x20; }))
+                return "ERR prompt must be printable text up to 400 bytes";
+            std::lock_guard<std::mutex> lock(state.prompt_lock); state.prompt = argument;
+            return argument.empty() ? "OK prompt cleared" : "OK prompt shown";
+        }
         if (action == "midi" && argument.empty()) return "OK {\"async_send_errors\":" + std::to_string(state.midi_send_errors.load()) + ",\"state\":" + catalog.json + '}';
         if (action == "mixer" && argument.empty()) return "OK " + mixer.json();
         if (action == "storage" && argument.empty()) return "OK {\"generation\":" + std::to_string(services.storage_generation()) + ",\"state\":" + services.storage_json() + '}';
@@ -245,7 +287,7 @@ private:
             if (!fields.eof()) return "ERR invalid mixer values";
             return unsigned_value(id, value) && mixer.set(value, values) ? "OK mixer updated" : "ERR unavailable control, wrong value count or range";
         }
-        return "ERR use status, hardware, surface, midi, midi-send, mixer, mixer-set, input, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot clock, clock-in, clock-out or stock";
+        return "ERR use status, hardware, surface, surface-log, push-exit, prompt, power, midi, midi-send, mixer, mixer-set, input, gain, monitor, brightness, storage, storage-mount, storage-unmount, audition, screenshot, clock, clock-in, clock-out or stock";
     }
     static void route(Shared& state, MidiEvent event) {
         int pad = pad_index(event);
@@ -265,7 +307,9 @@ private:
     Platform platform;
     SystemServices services;
     SurfaceState surface;
+    SurfaceLog<1024> surface_log;
     ClockIo clock;
+    PowerButton power;
     MidiCatalog catalog;
     MidiQueue<4, MidiCatalog> catalog_updates;
     MidiQueue<256, MidiPacket> surface_events;
@@ -274,26 +318,54 @@ private:
     unsigned surface_overflows = 0;
 };
 
-int control(const std::string& runtime, const std::string& command) {
-    int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-    require(fd >= 0, "Create client socket");
-    sockaddr_un local {}, remote {}; local.sun_family = remote.sun_family = AF_UNIX;
-    std::string local_path = runtime + "/client-" + std::to_string(getpid()) + ".sock", remote_path = runtime + "/control.sock";
-    require(local_path.size() < sizeof(local.sun_path) && remote_path.size() < sizeof(remote.sun_path), "Runtime path is too long");
-    strcpy(local.sun_path, local_path.c_str()); strcpy(remote.sun_path, remote_path.c_str());
-    int result = 1;
-    unlink(local.sun_path);
-    if (bind(fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0 &&
-        sendto(fd, command.data(), command.size(), 0, reinterpret_cast<sockaddr*>(&remote), sizeof(remote)) >= 0) {
-        pollfd ready {fd, POLLIN, 0};
-        if (poll(&ready, 1, 3500) > 0) {
-            char reply[32768] {}; auto size = recv(fd, reply, sizeof(reply) - 1, 0);
-            if (size > 0) { std::cout << reply << '\n'; result = strncmp(reply, "OK", 2) != 0; }
-        }
+class ControlClient {
+public:
+    explicit ControlClient(const std::string& runtime) {
+        fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        require(fd >= 0, "Create client socket");
+        local.sun_family = remote.sun_family = AF_UNIX;
+        std::string local_path = runtime + "/client-" + std::to_string(getpid()) + ".sock", remote_path = runtime + "/control.sock";
+        require(local_path.size() < sizeof(local.sun_path) && remote_path.size() < sizeof(remote.sun_path), "Runtime path is too long");
+        strcpy(local.sun_path, local_path.c_str()); strcpy(remote.sun_path, remote_path.c_str());
+        unlink(local.sun_path);
+        if (bind(fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) != 0) { close(fd); throw std::runtime_error("Bind client socket"); }
     }
-    unlink(local.sun_path); close(fd);
-    if (result) std::cerr << "No reply from sample-base\n";
-    return result;
+    ~ControlClient() { unlink(local.sun_path); close(fd); }
+    ControlClient(const ControlClient&) = delete;
+    ControlClient& operator=(const ControlClient&) = delete;
+    // Empty when the app does not answer. A late reply to an earlier request
+    // is discarded by draining before each send.
+    std::string request(const std::string& command) {
+        char reply[32768];
+        while (recv(fd, reply, sizeof(reply), MSG_DONTWAIT) > 0) {}
+        if (sendto(fd, command.data(), command.size(), 0, reinterpret_cast<sockaddr*>(&remote), sizeof(remote)) < 0) return {};
+        pollfd ready {fd, POLLIN, 0};
+        if (poll(&ready, 1, 3500) <= 0) return {};
+        auto size = recv(fd, reply, sizeof(reply) - 1, 0);
+        return size > 0 ? std::string(reply, size_t(size)) : std::string();
+    }
+private:
+    int fd = -1;
+    sockaddr_un local {}, remote {};
+};
+
+int control(const std::string& runtime, const std::string& command) {
+    auto reply = ControlClient(runtime).request(command);
+    if (reply.empty()) { std::cerr << "No reply from sample-base\n"; return 1; }
+    std::cout << reply << '\n';
+    return reply.compare(0, 2, "OK") != 0;
+}
+// One command per stdin line and one reply per stdout line, so a single SSH
+// session can drive interactive tools such as control calibration.
+int control_stream(const std::string& runtime) {
+    ControlClient client(runtime);
+    for (std::string command; std::getline(std::cin, command);) {
+        auto reply = client.request(command);
+        if (reply.empty()) { std::cout << "ERR no reply from sample-base" << std::endl; return 1; }
+        std::replace(reply.begin(), reply.end(), '\n', ' ');
+        std::cout << reply << std::endl;
+    }
+    return 0;
 }
 
 void save_png(const juce::Image& image, const std::string& path) {
@@ -341,8 +413,10 @@ int main(int argc, char** argv) {
             ? "/usr/share/fonts/ttf/LiberationSans-Regular.ttf"
             : "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
         if (argc == 3 && !strcmp(argv[1], "--self-test")) return self_test(argv[2]);
-        if (argc == 3 && !strcmp(argv[1], "--preview")) {
+        if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--preview")) {
             Screen screen(font); ScreenState state; state.last_pad = 0; state.velocity = 100; state.held = 1; state.peak = 0.17f;
+            state.last_input = describe_last_input(pack_last_input(InputKind::Control, uint8_t(SurfaceControl::Wheel), uint8_t(-1)));
+            if (argc == 4) state.prompt = argv[3];
             save_png(screen.draw(state), argv[2]); return 0;
         }
         std::string output = "hw:I2S,0", input = "hw:I2S,0", runtime = "/run/sample-base";
@@ -364,6 +438,8 @@ int main(int argc, char** argv) {
                               << ",\"output\":" << (port.output ? "true" : "false") << '}';
                 }
                 std::cout << "]}\n"; return 0;
+            } else if (option == "--ctl-stream") {
+                return control_stream(runtime);
             } else if (option == "--ctl") {
                 require(i + 1 < argc, "Control command is missing");
                 std::string command;
@@ -393,7 +469,8 @@ int main(int argc, char** argv) {
             std::cout << "READY sample-base JUCE " << JUCE_MAJOR_VERSION << '.' << JUCE_MINOR_VERSION << '.' << JUCE_BUILDNUMBER << std::endl;
             while (state.running.load() && !interrupted && std::chrono::steady_clock::now() < deadline) {
                 if (screen && display) {
-                    ScreenState view {state.held.load(), state.last_pad.load(), state.velocity.load(), state.audio.peak.load(), state.audio.xruns.load()};
+                    ScreenState view {state.held.load(), state.last_pad.load(), state.velocity.load(), state.audio.peak.load(), state.audio.xruns.load(), {}, describe_last_input(state.last_input.load())};
+                    { std::lock_guard<std::mutex> lock(state.prompt_lock); view.prompt = state.prompt; }
                     auto image = screen->draw(view);
                     display->present(image);
                     if (state.screenshot.exchange(false)) save_png(image, runtime + "/screen.png");

@@ -23,6 +23,12 @@ class RuntimeTests(unittest.TestCase):
                                    "-Wl,--wrap=ioctl", "-Wl,--wrap=read"))
             subprocess.run([str(binary)], check=True, timeout=5)
 
+    def test_power_button_evdev_press_release(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "power"
+            compile_fixture(binary, "tests/power_button.cpp", "src/power_button.cpp", "src/platform.cpp")
+            subprocess.run([str(binary), str(Path(temp) / "fixture")], check=True, timeout=5)
+
     def test_mixer_ranges_exclusive_inputs_and_restore(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "mixer"
@@ -87,6 +93,26 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIn("ports", hardware["midi"])
                 self.assertFalse(json.loads(command("storage")[3:])["state"]["available"])
                 self.assertEqual(len(json.loads(command("surface")[3:])["state"]["controls"]), 128)
+                log = json.loads(command("surface-log 0")[3:])
+                self.assertEqual((log["newest"], log["next"], log["packets"]), (0, 0, []))
+                self.assertTrue(command("surface-log -1").startswith("ERR"))
+                self.assertIn("push_exit=1", command("status"))
+                self.assertTrue(command("push-exit off").startswith("OK"))
+                self.assertIn("push_exit=0", command("status"))
+                self.assertTrue(command("push-exit maybe").startswith("ERR"))
+                self.assertTrue(command("push-exit on").startswith("OK"))
+                self.assertTrue(command("prompt STEP 1/2|K1|Turn left||Pad 1 next").startswith("OK"))
+                self.assertTrue(command("prompt " + "x" * 401).startswith("ERR"))
+                self.assertTrue(command("prompt").startswith("OK"))
+                power = json.loads(command("power")[3:])
+                self.assertEqual((power["key"], power["presses"]), ("KEY_POWER", 0))
+                stream = subprocess.run([str(ROOT / "build/sample-base"), "--runtime-dir", str(runtime), "--ctl-stream"],
+                                        input="status\nunknown\nsurface-log 0\n", capture_output=True, text=True, timeout=15)
+                replies = stream.stdout.splitlines()
+                self.assertEqual(stream.returncode, 0, stream.stderr)
+                self.assertEqual(len(replies), 3)
+                self.assertTrue(replies[0].startswith("OK frames=") and replies[1].startswith("ERR"))
+                self.assertEqual(json.loads(replies[2][3:])["packets"], [])
                 self.assertTrue(command("stock").startswith("OK"))
                 stdout, stderr = app.communicate(timeout=5)
                 self.assertEqual(app.returncode, 0, stderr)

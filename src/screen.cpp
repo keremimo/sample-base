@@ -14,11 +14,26 @@ juce::Image Screen::draw(const ScreenState& state) {
     juce::Graphics g(image);
     const juce::Colour background(0xff10151b), text(0xfff0f1eb), muted(0xff98a7b5), mint(0xff8de0bd);
     g.fillAll(background);
-    auto label = [&](juce::String value, int x, int y, int w, int h, float size, juce::Colour colour) {
+    auto label = [&](juce::String value, int x, int y, int w, int h, float size, juce::Colour colour,
+                     juce::Justification justification = juce::Justification::centredLeft) {
         g.setColour(colour);
         g.setFont(juce::Font(juce::FontOptions(typeface).withHeight(size)));
-        g.drawText(value, x, y, w, h, juce::Justification::centredLeft, false);
+        g.drawText(value, x, y, w, h, justification, false);
     };
+    if (!state.prompt.empty()) {
+        juce::StringArray lines;
+        lines.addTokens(juce::String::fromUTF8(state.prompt.c_str()), "|", "");
+        while (lines.size() < 5) lines.add({});
+        g.setColour(juce::Colour(0xff263b34)); g.fillRoundedRectangle(12, 12, 296, 24, 5);
+        label(lines[0], 22, 12, 280, 24, 14, mint);
+        label(lines[1], 12, 48, 296, 44, 36, text);
+        label(lines[2], 12, 96, 296, 26, 18, text);
+        g.setColour(juce::Colour(0xff1b232b)); g.fillRoundedRectangle(12, 136, 296, 52, 5);
+        label(lines[3], 22, 136, 280, 52, 16, mint);
+        g.setColour(juce::Colour(0xff30404b)); g.fillRect(12, 205, 296, 1);
+        label(lines[4], 12, 210, 296, 20, 12, muted);
+        return image;
+    }
     label("sample-base", 12, 7, 220, 27, 25, text);
     g.setColour(juce::Colour(0xff263b34)); g.fillRoundedRectangle(245, 13, 63, 19, 5);
     label("PLAY", 260, 13, 45, 19, 12, mint);
@@ -36,7 +51,9 @@ juce::Image Screen::draw(const ScreenState& state) {
         label(pad_note_labels[pad], x + 7, y, 57, 16, 11, held ? background : text);
     }
     g.setColour(juce::Colour(0xff30404b)); g.fillRect(12, 205, 296, 1);
-    label("Push: stock app", 12, 210, 296, 20, 13, text);
+    label("Push: stock app", 12, 210, 140, 20, 13, text);
+    if (!state.last_input.empty())
+        label(juce::String::fromUTF8(state.last_input.c_str()), 150, 210, 158, 20, 13, mint, juce::Justification::centredRight);
     if (state.xruns) label("Audio recoveries: " + juce::String(state.xruns), 150, 39, 160, 16, 11, muted);
     return image;
 }
