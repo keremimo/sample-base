@@ -157,9 +157,11 @@ long-session clock drift all need hardware confirmation. Saving takes,
 project storage, presets and sequences longer than one bar remain
 application work.
 
-The step sequencer has not yet run on the MPC. The drums' sound and balance
-against the synth on the speaker and headphones, the pad and button light
-timing, and Tap Tempo's feel need hardware confirmation.
+The step sequencer ran on the MPC from a RAM install. A four-second remote
+run at 110 BPM played the default groove on schedule (9 kicks, 4 claps, 17
+closed and 8 open hats) with no playback or capture underruns and no dropped
+surface messages, and the device screenshot matched the preview. The owner
+then played it on the device and found it fine.
 The installer remains RAM-only; reboot removes the session setup and uses
 the existing startup configuration. Hardware mixer/backlight restoration is
 best effort on normal exit; crash recovery restores the stock service.
