@@ -91,6 +91,15 @@ public:
     // from `input`, both interleaved stereo S32. Input is silent when capture
     // is unavailable.
     virtual void render(const AudioBlock& input, AudioBlock& output) = 0;
+    // Any thread: the rate and queued periods the app wants the audio device
+    // in. The runtime opens it so at start and, within about 0.1 s of a
+    // change, closes and reopens it (a short silence). A format the device
+    // refuses falls back to the default; session().audio.rate / periods say
+    // what runs. Apps that never override it run at 44.1 kHz, three periods.
+    virtual AudioFormat audio_format() const { return {}; }
+    // Audio thread, before the first render() of each opened device: the
+    // format it runs in (rate, and the frames queued ahead of the jacks).
+    virtual void audio_opened(const AudioFormat&) {}
     // Audio thread, right after each render(): that block's stems, one mono
     // channel per track, which a computer records over USB-C beside the main
     // mix (channels 3 to 18), or null for silence there. The app owns the

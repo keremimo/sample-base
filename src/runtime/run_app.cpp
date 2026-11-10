@@ -40,6 +40,16 @@ void render(void* context, const AudioBlock& input, AudioBlock& output) {
     route.app.render(input, output);
     route.usb.push(output.data(), audio_frames, route.app.stems());
 }
+
+// The app's format, or the default when the device refuses it. Throws only
+// when the default fails too.
+std::unique_ptr<AudioDevice> open_audio(const Options& options, AudioFormat wanted) {
+    if (wanted != AudioFormat {}) {
+        try { return std::make_unique<AudioDevice>(options.audio_output, options.audio_input, wanted); }
+        catch (const std::exception& error) { std::cerr << "Audio format refused, using 44100 Hz: " << error.what() << '\n'; }
+    }
+    return std::make_unique<AudioDevice>(options.audio_output, options.audio_input);
+}
 } // namespace
 
 int run_app(App& app, const Options& options) {
@@ -51,7 +61,8 @@ int run_app(App& app, const Options& options) {
     if (options.usb_output == "auto" && options.usb_stems)
         std::cout << "USB-C audio: " << describe(widen_uac2_playback(UsbAudioOutput::channels)) << std::endl;
     UsbAudioOutput usb_output; // Outlives the audio thread, which feeds it.
-    AudioDevice audio(options.audio_output, options.audio_input);
+    AudioFormat requested = app.audio_format(); // Screen thread: what the app last asked for
+    auto audio = open_audio(options, requested);
     Controller controller(app, options.surface_required, usb_output);
     ControlServer server(options.runtime);
     Session session;
@@ -62,7 +73,23 @@ int run_app(App& app, const Options& options) {
                                     : std::chrono::steady_clock::time_point::max();
     std::thread audio_thread, control_thread;
     try {
-        audio_thread = std::thread([&] { audio.run(session.running, session.failed, session.audio, render, &route); });
+        // The audio thread runs one device at a time; a format change closes it and opens the next.
+        audio_thread = std::thread([&] {
+            while (true) {
+                usb_output.set_device_rate(audio->format().rate);
+                app.audio_opened(audio->format());
+                audio->run(session.running, session.failed, session.audio, render, &route, &session.audio_reopen);
+                if (!session.running.load()) break;
+                audio.reset();
+                try { audio = open_audio(options, app.audio_format()); }
+                catch (const std::exception& error) {
+                    std::cerr << error.what() << '\n';
+                    session.failed.store(true); session.running.store(false); break;
+                }
+                session.audio.reopens.fetch_add(1);
+                session.audio_reopen.store(false);
+            }
+        });
         control_thread = std::thread([&] { controller.run(session, server); });
         std::cout << "READY sample-base JUCE " << JUCE_MAJOR_VERSION << '.' << JUCE_MINOR_VERSION << '.' << JUCE_BUILDNUMBER << std::endl;
         // This thread draws the screen: the remote prompt while one is shown,
@@ -79,6 +106,7 @@ int run_app(App& app, const Options& options) {
         auto next = ScreenClock::now(), last_change = next;
         while (session.running.load() && !interrupted && ScreenClock::now() < deadline) {
             auto start = ScreenClock::now();
+            if (auto wanted = app.audio_format(); wanted != requested) { requested = wanted; session.audio_reopen.store(true); }
             if (display) {
                 {
                     juce::Graphics g(image);

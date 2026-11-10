@@ -24,6 +24,9 @@ struct ScreenStats {
 struct Session {
     std::atomic<bool> running {true}, failed {false}, screenshot {false};
     AudioStats audio; // Audio thread.
+    // The screen thread sets it when App::audio_format() changes; the audio
+    // thread closes the device, opens the new format and clears it.
+    std::atomic<bool> audio_reopen {false};
     ScreenStats screen; // Screen thread.
 
     // Surface diagnostics, written by the MIDI thread.

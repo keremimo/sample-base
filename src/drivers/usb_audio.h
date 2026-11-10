@@ -21,7 +21,7 @@
 // On firmware 1.3.0.12 both directions are stereo S32_LE; widen_uac2_playback()
 // (drivers/usb_gadget.h) gives the computer-bound side room for stems.
 //
-// The computer's USB clock and the AK4558's 44.1 kHz drift apart, so each
+// The computer's USB clock and the AK4558's drift apart, so each
 // direction runs its own thread with a FrameRing to the audio thread. Neither
 // opens anything until the computer streams, and neither touches the gadget's
 // pitch or feedback controls.
@@ -47,12 +47,12 @@ struct UsbStreamStats {
 
 // What a computer plays to the MPC. start() opens nothing on the calling
 // thread: a separate thread finds the gadget, waits for the computer,
-// converts its stream to 44.1 kHz stereo float and hands it to the audio
+// converts its stream to the audio device's rate, stereo float and hands it to the audio
 // thread. The ring re-primes when it runs dry. Nothing is opened unless an
 // application selects USB input.
 class UsbAudioInput {
 public:
-    static constexpr unsigned ring_frames = 8192, prime_frames = 1024, output_rate = 44100;
+    static constexpr unsigned ring_frames = 8192, prime_frames = 1024;
 
     UsbAudioInput() = default;
     ~UsbAudioInput() { stop(); }
@@ -65,6 +65,9 @@ public:
     void stop();
     // Audio thread: `count` stereo frames, silent until enough are buffered.
     bool pull(float* frames, unsigned count) { return ring.pull(frames, count, prime_frames); }
+    // Any thread: the audio device's rate, which pull() delivers (44.1 kHz
+    // until told). A change reopens the stream within 250 ms.
+    void set_device_rate(unsigned rate) { device_rate.store(rate, std::memory_order_relaxed); }
 
     UsbStreamState state() const { return UsbStreamState(current.load(std::memory_order_acquire)); }
     unsigned rate() const { return stream_rate.load(std::memory_order_relaxed); }
@@ -81,6 +84,7 @@ private:
     std::atomic<bool> running {false};
     std::atomic<uint8_t> current {uint8_t(UsbStreamState::Stopped)};
     std::atomic<unsigned> stream_rate {0}, stream_channels {0}, stream_width {0}, xruns {0}, opens {0};
+    std::atomic<unsigned> device_rate {44100};
     mutable std::mutex device_lock; // Guards `device_name`; never taken by the audio thread.
     std::string device_name;
 };
@@ -104,7 +108,7 @@ struct UsbStems { float track[usb_stem_count][usb_stem_frames]; };
 // With fewer than 18 channels the stems that do not fit are left out.
 class UsbAudioOutput {
 public:
-    static constexpr unsigned ring_frames = 8192, prime_frames = 1024, input_rate = 44100;
+    static constexpr unsigned ring_frames = 8192, prime_frames = 1024;
     static constexpr unsigned channels = 2 + usb_stem_count; // What the ring carries
 
     UsbAudioOutput() = default;
@@ -113,7 +117,7 @@ public:
     UsbAudioOutput& operator=(const UsbAudioOutput&) = delete;
 
     // "auto" finds the UAC2 gadget card; any other value is an ALSA PCM name,
-    // opened at 44.1 kHz when it has no rate control. Called from one control
+    // opened at the device's rate when it has no rate control. Called from one control
     // thread; start() again restarts.
     void start(const std::string& device);
     void stop();
@@ -123,6 +127,10 @@ public:
     // stems (silent when null; then `count` may be any length, otherwise at
     // most usb_stem_frames). Never blocks.
     void push(const int32_t* frames, unsigned count, const UsbStems* stems = nullptr);
+    // Any thread: the audio device's rate, what push() is given (44.1 kHz
+    // until told). The runtime sets it at each open; a change reopens the
+    // stream within 250 ms.
+    void set_device_rate(unsigned rate) { device_rate.store(rate, std::memory_order_relaxed); }
 
     UsbStreamState state() const { return UsbStreamState(current.load(std::memory_order_acquire)); }
     unsigned rate() const { return stream_rate.load(std::memory_order_relaxed); }
@@ -143,6 +151,7 @@ private:
     std::atomic<uint8_t> current {uint8_t(UsbStreamState::Stopped)};
     std::atomic<unsigned> stream_rate {0}, stream_channels {0}, stream_width {0}, xruns {0}, opens {0};
     std::atomic<int> trim_ppm {0};
+    std::atomic<unsigned> device_rate {44100};
     mutable std::mutex device_lock; // Guards the names; never taken by the audio thread.
     std::string device_name, requested_name;
 };

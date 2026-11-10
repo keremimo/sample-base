@@ -56,7 +56,9 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 
 | Hook | Thread | When |
 | --- | --- | --- |
-| `render(input, output)` | audio | Every 128 frames (2.9 ms). Fill `output` from `input`; both are interleaved stereo S32 at 44.1 kHz. Input is silent without capture. |
+| `render(input, output)` | audio | Every 128 frames (2.9 ms at 44.1 kHz). Fill `output` from `input`; both are interleaved stereo S32 at the device's rate. Input is silent without capture. |
+| `audio_format()` | any | Optional: the rate (44.1, 48, 96 kHz) and periods queued (2–8) the app wants; the runtime reopens the device within about 0.1 s of a change. The default is 44.1 kHz, three periods. |
+| `audio_opened(format)` | audio | Before the first `render()` of each opened device: the rate and frames queued it runs at. |
 | `stems()` | audio | Right after each `render()`. Optional: a `UsbStems` block (`drivers/usb_audio.h`) the app wrote in `render()`, one mono float channel per track, which a computer records on USB-C channels 3–18. The default, null, sends silence there. |
 | `surface(event)` | MIDI | Every control-surface message. `event.pad` is 0–15 for a pad's note-on, note-off or pressure; `event.input` names a button or control (`surface/controls.h`); `event.syncing` marks the startup position replies. |
 | `midi(port, packet)` | MIDI | Every packet from an external port (DIN or USB MIDI), including clock and SysEx. |
@@ -135,8 +137,8 @@ holds it until then and asks `wake_at()` for that time; the MIDI loop
 sleeps in `ppoll` on the inputs with that deadline, which the PREEMPT_RT
 kernel's high-resolution timers keep to well under a millisecond. To line
 MIDI up with the sound, time it on the audio clock: a block rendered now is
-heard `audio_frames * audio_queued_periods` frames later
-(`drivers/audio.h`). Melodee does this (`src/melodee/engine/midi_out.h`).
+heard `AudioFormat::latency_frames()` frames later (`drivers/audio.h`,
+given to `audio_opened()`). Melodee does this (`src/melodee/engine/midi_out.h`).
 Messages are built with `juce::MidiMessage` (`juce_audio_basics` is part of
 the build). The ALSA sequencer could schedule in the kernel instead, but on
 this kernel its queues tick on the 1 ms system timer or the PCM's 2.9 ms

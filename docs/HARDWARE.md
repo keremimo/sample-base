@@ -181,9 +181,19 @@ was driven at up to 192 pulses a quarter this way; the jack's voltage has not
 been measured.
 
 `--audio-output NAME --audio-input NAME|off` selects another ALSA PCM. This
-base currently requires native 44.1 kHz, stereo S32, 128-frame periods and
-at least two periods of buffering. Unsupported playback settings fail
-explicitly; optional capture failure is reported by `capture_active=0`.
+base requires stereo S32 and 128-frame periods, at 44.1, 48 or 96 kHz with
+two to eight periods queued (`AudioFormat`; 44.1 kHz and three by default).
+An app asks for its format with `App::audio_format()`; the runtime reopens
+the device when that changes (a short silence) and falls back to the default
+when the PCM refuses it. The AK4558 takes all three rates: its driver sets
+normal speed for 44.1 / 48 kHz and double speed for 96 kHz (`DFS`), with the
+card's fixed 512 fs master clock (24.576 MHz at 48 kHz, read from the clock
+tree; 96 kHz opens and runs without errors, its sound not yet checked by ear).
+The device tree's `simple-audio-card,convert-rate = 44100` does nothing on
+this card (plain `simple-audio-card` has no DPCM back end). Unsupported
+playback settings fail explicitly; optional capture failure is reported by
+`capture_active=0`. `status` adds `audio_rate`, `audio_periods`,
+`audio_latency_frames` and `audio_reopens`.
 There is no implicit resampling of the main stream. USB-C audio in and out
 are separate streams with their own rate conversion, described below.
 

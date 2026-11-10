@@ -121,6 +121,7 @@ void UsbAudioInput::run(std::string requested) {
     std::vector<uint8_t> raw;
     std::vector<float> converted;
     long open_rate = 0;
+    unsigned open_device = 0;
     auto close = [&] {
         if (capture.pcm) { snd_pcm_drop(capture.pcm); snd_pcm_close(capture.pcm); capture.pcm = nullptr; }
         stream_rate.store(0); stream_channels.store(0); stream_width.store(0);
@@ -134,12 +135,13 @@ void UsbAudioInput::run(std::string requested) {
             { std::lock_guard<std::mutex> lock(device_lock); device_name = target.pcm; }
             if (target.pcm.empty() || target.rate == 0) {
                 close(); set_state(target.pcm.empty() ? UsbStreamState::Missing : UsbStreamState::Waiting);
-            } else if (capture.pcm && target.rate > 0 && target.rate != open_rate) {
-                close(); // The computer changed rate; reopen at the new one.
+            } else if (capture.pcm && ((target.rate > 0 && target.rate != open_rate) || device_rate.load() != open_device)) {
+                close(); // The computer or the audio device changed rate; reopen at the new one.
             }
             if (!capture.pcm && !target.pcm.empty() && target.rate != 0) {
+                unsigned output_rate = device_rate.load();
                 if (open_stream(target.pcm, SND_PCM_STREAM_CAPTURE, target.rate, output_rate, capture)) {
-                    open_rate = target.rate; ++opens;
+                    open_rate = target.rate; open_device = output_rate; ++opens;
                     raw.assign(capture.period * capture.channels * capture.width, 0);
                     resampler.reset(capture.rate, output_rate);
                     ring.flush();
@@ -237,6 +239,7 @@ void UsbAudioOutput::run(std::string requested) {
     std::array<float, channels * chunk_frames> chunk;
     snd_pcm_uframes_t pending = 0, offset = 0; // Encoded frames in `raw` still to write, and where they start.
     long open_rate = 0;
+    unsigned open_device = 0;
     double fill_sum = 0; unsigned fill_count = 0;
     auto close = [&] {
         accepting.store(false, std::memory_order_release);
@@ -276,12 +279,13 @@ void UsbAudioOutput::run(std::string requested) {
             { std::lock_guard<std::mutex> lock(device_lock); device_name = target.pcm; }
             if (target.pcm.empty() || target.rate == 0) {
                 close(); set_state(target.pcm.empty() ? UsbStreamState::Missing : UsbStreamState::Waiting);
-            } else if (playback.pcm && target.rate > 0 && target.rate != open_rate) {
-                close(); // The computer changed rate; reopen at the new one.
+            } else if (playback.pcm && ((target.rate > 0 && target.rate != open_rate) || device_rate.load() != open_device)) {
+                close(); // The computer or the audio device changed rate; reopen at the new one.
             }
             if (!playback.pcm && !target.pcm.empty() && target.rate != 0) {
+                unsigned input_rate = device_rate.load();
                 if (open_stream(target.pcm, SND_PCM_STREAM_PLAYBACK, target.rate, input_rate, playback)) {
-                    open_rate = target.rate; ++opens;
+                    open_rate = target.rate; open_device = input_rate; ++opens;
                     raw.assign(playback.period * playback.channels * playback.width, 0);
                     staged.clear(); staged.reserve(channels * (playback.period + chunk_frames * 2));
                     pending = 0; fill_sum = 0; fill_count = 0;

@@ -339,7 +339,8 @@ class RuntimeTests(unittest.TestCase):
                     return client.recv(32768).decode()
                 status = command("status")
                 # The runtime's fields only: the starter adds none.
-                self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1 usb_output=stopped card_share=home"), status)
+                self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1 usb_output=stopped card_share=home "
+                                                                     "audio_rate=44100 audio_periods=3 audio_latency_frames=384 audio_reopens=0"), status)
                 self.assertNotIn("page=", status)
                 self.assertEqual(command("audition"), "OK audition pad 1")
                 for _ in range(300):
