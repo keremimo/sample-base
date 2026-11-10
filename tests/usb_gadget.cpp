@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
     for (auto dir : {root, gadget, gadget + "/functions", gadget + "/functions/midi.midi", gadget + "/functions/ncm.network", function})
         mkdir(dir.c_str(), 0700);
     put(function + "/p_chmask", "3\n");
+    put(function + "/p_srate", "44100\n"); put(function + "/c_srate", "44100\n");
     put(gadget + "/UDC", "fcc00000.usb\n");
     std::string config = gadget + "/configs/c.1";
     for (auto dir : {gadget + "/configs", config}) mkdir(dir.c_str(), 0700);
@@ -51,19 +52,34 @@ int main(int argc, char** argv) {
     assert(change.before == 3 && change.after == 0x3ffff);
     assert(slurp(function + "/p_chmask") == "262143\n");
     assert(slurp(gadget + "/UDC") == "fcc00000.usb\n" && linked()); // Linked and bound again.
-    assert(slurp(saved) == function + " 3\n");
+    assert(slurp(saved) == function + " 3 44100\n");
     assert(describe(change) == function + " p_chmask 3 -> 262143");
 
     // The next app start finds it widened and keeps the original saved.
     put(gadget + "/UDC", "fcc00000.usb\n");
     change = widen_uac2_playback(18, root, saved);
-    assert(change.result == GadgetChange::Result::Unchanged && slurp(saved) == function + " 3\n");
+    assert(change.result == GadgetChange::Result::Unchanged && slurp(saved) == function + " 3 44100\n");
 
     // An unbound gadget stays unbound.
     put(gadget + "/UDC", "\n");
     change = widen_uac2_playback(2, root, saved);
     assert(change.result == GadgetChange::Result::Changed && slurp(function + "/p_chmask") == "3\n");
-    assert(slurp(gadget + "/UDC") == "\n" && slurp(saved) == function + " 3\n" && linked());
+    assert(slurp(gadget + "/UDC") == "\n" && slurp(saved) == function + " 3 44100\n" && linked());
+
+    // The rate follows the audio device's, both ways at once (the stock gadget shares one clock); the
+    // original stays saved. The same rate again touches nothing; a rate f_uac2 has no room for is refused.
+    put(gadget + "/UDC", "fcc00000.usb\n");
+    change = set_uac2_rate(96000, root, saved);
+    assert(change.result == GadgetChange::Result::Changed && change.rate && change.before == 44100 && change.after == 96000);
+    assert(slurp(function + "/p_srate") == "96000\n" && slurp(function + "/c_srate") == "96000\n");
+    assert(slurp(gadget + "/UDC") == "fcc00000.usb\n" && linked() && slurp(saved) == function + " 3 44100\n");
+    assert(describe(change) == function + " p_srate 44100 -> 96000");
+    assert(set_uac2_rate(96000, root, saved).result == GadgetChange::Result::Unchanged);
+    assert(set_uac2_rate(400000, root, saved).result == GadgetChange::Result::Failed && slurp(function + "/p_srate") == "96000\n");
+    unlink(saved.c_str());
+    assert(set_uac2_rate(44100, root, saved).result == GadgetChange::Result::Changed); // the first change saves the original
+    assert(slurp(saved) == function + " 3 96000\n" && slurp(function + "/c_srate") == "44100\n");
+    unlink(saved.c_str()); put(saved, function + " 3 44100\n");
 
     // SD card access: the mass-storage function made (configfs makes its
     // LUN; here it is there already), linked last, bound, given back.

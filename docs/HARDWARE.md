@@ -194,6 +194,16 @@ this card (plain `simple-audio-card` has no DPCM back end). Unsupported
 playback settings fail explicitly; optional capture failure is reported by
 `capture_active=0`. `status` adds `audio_rate`, `audio_periods`,
 `audio_latency_frames` and `audio_reopens`.
+
+The USB-C audio gadget follows the device's rate: when it changes, the
+service thread rewrites the UAC2 function's `p_srate` and `c_srate` (equal,
+the gadget shares one clock) and rebinds the gadget as the stems widening
+does (`set_uac2_rate()`, `drivers/usb_gadget.h`), so the computer sees the
+MPC at 48 or 96 kHz too; USB audio, MIDI and SSH drop for about a second.
+Never while the card is lent; `--usb-output off` leaves the gadget alone.
+Checked on the MPC with the Mac: 18 channels at 96 kHz bind (the full-speed
+descriptor warns of a 6984-byte packet, which high speed never uses) and
+record with no underruns; restore-stock.sh puts the original rate back.
 There is no implicit resampling of the main stream. USB-C audio in and out
 are separate streams with their own rate conversion, described below.
 

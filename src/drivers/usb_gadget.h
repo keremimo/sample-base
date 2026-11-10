@@ -14,14 +14,19 @@
 // come back, and SSH and MIDI over USB drop for about a second. The kernel
 // (drivers/usb/gadget/function/f_uac2.c) allows at most 27 channels a side.
 //
-// Before the first change the original mask is saved as one line,
-// "<function directory> <mask>", which install/restore-stock.sh reads to
-// give the stock app its stereo gadget back.
+// Its rate (p_srate and c_srate, equal: the stock gadget shares one clock
+// between the two directions) changes the same way: set_uac2_rate() makes
+// the computer record and play at the rate the audio device runs at.
+//
+// Before the first change the original mask and rate are saved as one line,
+// "<function directory> <mask> <rate>", which install/restore-stock.sh reads
+// to give the stock app its stereo 44.1 kHz gadget back.
 
 struct GadgetChange {
     enum class Result { Missing, Unchanged, Changed, Failed } result = Result::Missing;
     std::string function; // The UAC2 function's configfs directory, or empty
-    unsigned before = 0, after = 0; // Playback channel masks
+    bool rate = false;              // A rate change: `before` and `after` are rates, not masks
+    unsigned before = 0, after = 0; // Playback channel masks, or rates
     std::string error;
 };
 
@@ -33,6 +38,10 @@ constexpr const char* gadget_saved_mask = "/run/sample-base-uac2-p_chmask";
 // On failure the gadget is bound again when it was bound before.
 GadgetChange widen_uac2_playback(unsigned channels, const std::string& root = gadget_root,
                                  const std::string& saved = gadget_saved_mask);
+// Sets the first UAC2 function's rate, both ways, to `rate` (8 to 192 kHz),
+// unbinding and rebinding its gadget only when it differs. On failure the
+// old rate goes back.
+GadgetChange set_uac2_rate(unsigned rate, const std::string& root = gadget_root, const std::string& saved = gadget_saved_mask);
 std::string describe(const GadgetChange& change);
 
 // The SD card offered to a computer as a USB drive, beside the gadget's

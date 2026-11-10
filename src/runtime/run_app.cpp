@@ -63,7 +63,7 @@ int run_app(App& app, const Options& options) {
     UsbAudioOutput usb_output; // Outlives the audio thread, which feeds it.
     AudioFormat requested = app.audio_format(); // Screen thread: what the app last asked for
     auto audio = open_audio(options, requested);
-    Controller controller(app, options.surface_required, usb_output);
+    Controller controller(app, options.surface_required, usb_output, options.usb_output == "auto");
     ControlServer server(options.runtime);
     Session session;
     app.attach(session);

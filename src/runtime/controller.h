@@ -33,7 +33,8 @@ public:
     // Throws when `surface_required` and no control surface is connected.
     // `usb_output` belongs to run_app(), which feeds it from the audio thread;
     // the controller only starts, stops and reports it.
-    Controller(App& app, bool surface_required, UsbAudioOutput& usb_output);
+    // `usb_rate`: the USB-C audio gadget follows the audio device's rate (set_uac2_rate()).
+    Controller(App& app, bool surface_required, UsbAudioOutput& usb_output, bool usb_rate = false);
     // Service thread. Returns once session.running is cleared and the MIDI
     // thread has stopped; a failure sets session.failed.
     void run(Session& session, ControlServer& server);
@@ -48,6 +49,7 @@ private:
     void record_surface_packets();
     void poll_platform(Session& session);
     void follow_card(Session& session);
+    void follow_usb_rate(Session& session);
 
     // commands.cpp: the control protocol, run on the service thread.
     std::string command(Session& session, const std::string& text);
@@ -102,6 +104,10 @@ private:
 
     // What App::service() and App::command() may use.
     Hardware hardware {mixer, platform, services, clock, card, power, jacks, usb_output, catalog.ports};
+
+    // The audio device's rate the USB-C gadget was last set to (or found at); 0 never, or not to follow.
+    bool usb_rate_follows = false;
+    unsigned usb_rate_tried = 0;
 
     // Service thread asks, MIDI thread acts.
     MidiQueue<32, MidiSendRequest> midi_output;

@@ -128,18 +128,32 @@ bool first_gadget(const std::string& root, std::string& gadget, std::string& con
 }
 
 bool exists(const std::string& path) { struct stat info; return stat(path.c_str(), &info) == 0; }
+
+// The first gadget with a UAC2 function, and that function's directory.
+bool find_uac2(const std::string& root, std::string& gadget, std::string& function) {
+    for (const auto& name : entries(root))
+        for (const auto& entry : entries(root + "/" + name + "/functions"))
+            if (entry.rfind("uac2.", 0) == 0) { gadget = root + "/" + name; function = gadget + "/functions/" + entry; return true; }
+    return false;
+}
+
+// The first change saves the original mask and rate; a later one (another
+// app start, another rate) must not overwrite them with its own.
+bool save_original(const std::string& function, const std::string& saved, std::string& error) {
+    if (exists(saved)) return true;
+    std::string mask, rate;
+    if (!read_line(function + "/p_chmask", mask) || !read_line(function + "/p_srate", rate)) {
+        error = function + " unreadable"; return false;
+    }
+    return write_text(saved, function + " " + mask + " " + rate + "\n", error, O_WRONLY | O_CREAT | O_EXCL);
+}
 } // namespace
 
 GadgetChange widen_uac2_playback(unsigned channels, const std::string& root, const std::string& saved) {
     GadgetChange change;
     if (channels < 1 || channels > 27) { change.result = GadgetChange::Result::Failed; change.error = "1 to 27 channels"; return change; }
     std::string gadget;
-    for (const auto& name : entries(root)) {
-        for (const auto& function : entries(root + "/" + name + "/functions"))
-            if (function.rfind("uac2.", 0) == 0) { gadget = root + "/" + name; change.function = gadget + "/functions/" + function; break; }
-        if (!gadget.empty()) break;
-    }
-    if (gadget.empty()) return change;
+    if (!find_uac2(root, gadget, change.function)) return change;
 
     std::string text, udc;
     if (!read_line(change.function + "/p_chmask", text) || !parse_mask(text, change.before)) {
@@ -150,12 +164,7 @@ GadgetChange widen_uac2_playback(unsigned channels, const std::string& root, con
     if (!read_line(gadget + "/UDC", udc)) {
         change.result = GadgetChange::Result::Failed; change.error = gadget + "/UDC unreadable"; return change;
     }
-    // The first change saves the original; a later one (another app start)
-    // must not overwrite it with the widened mask.
-    if (!exists(saved) &&
-        !write_text(saved, change.function + " " + std::to_string(change.before) + "\n", change.error, O_WRONLY | O_CREAT | O_EXCL)) {
-        change.result = GadgetChange::Result::Failed; return change;
-    }
+    if (!save_original(change.function, saved, change.error)) { change.result = GadgetChange::Result::Failed; return change; }
     // f_uac2 refuses a new mask while any configuration links the function,
     // bound or not, so every link comes out and goes back in its old order.
     // USB is also how SSH reaches the MPC: when the wide gadget will not
@@ -168,6 +177,39 @@ GadgetChange widen_uac2_playback(unsigned channels, const std::string& root, con
     if (!ok) {
         std::string back_error;
         change.error += rebind(gadget, udc, links, mask(change.before), back_error) ? " (original mask restored)" : "; restoring: " + back_error;
+    }
+    change.result = ok ? GadgetChange::Result::Changed : GadgetChange::Result::Failed;
+    return change;
+}
+
+GadgetChange set_uac2_rate(unsigned rate, const std::string& root, const std::string& saved) {
+    GadgetChange change;
+    change.rate = true; change.after = rate;
+    if (rate < 8000 || rate > 192000) { change.result = GadgetChange::Result::Failed; change.error = "8 to 192 kHz"; return change; }
+    std::string gadget;
+    if (!find_uac2(root, gadget, change.function)) return change;
+    std::string playback, capture, udc;
+    if (!read_line(change.function + "/p_srate", playback) || !read_line(change.function + "/c_srate", capture)) {
+        change.result = GadgetChange::Result::Failed; change.error = change.function + " rate unreadable"; return change;
+    }
+    change.before = unsigned(std::strtoul(playback.c_str(), nullptr, 10)); // A list reads as its first rate
+    std::string wanted = std::to_string(rate);
+    if (playback == wanted && capture == wanted) { change.result = GadgetChange::Result::Unchanged; return change; }
+    if (!read_line(gadget + "/UDC", udc)) {
+        change.result = GadgetChange::Result::Failed; change.error = gadget + "/UDC unreadable"; return change;
+    }
+    if (!save_original(change.function, saved, change.error)) { change.result = GadgetChange::Result::Failed; return change; }
+    // As the mask: f_uac2 takes a rate only while no configuration links it.
+    auto links = function_links(gadget);
+    auto rates = [&change](std::string p, std::string c) {
+        return [&change, p, c](std::string& error) {
+            return write_text(change.function + "/p_srate", p + "\n", error) && write_text(change.function + "/c_srate", c + "\n", error);
+        };
+    };
+    bool ok = rebind(gadget, udc, links, rates(wanted, wanted), change.error);
+    if (!ok) {
+        std::string back_error;
+        change.error += rebind(gadget, udc, links, rates(playback, capture), back_error) ? " (old rate restored)" : "; restoring: " + back_error;
     }
     change.result = ok ? GadgetChange::Result::Changed : GadgetChange::Result::Failed;
     return change;
@@ -258,8 +300,9 @@ std::string describe(const GadgetChange& change) {
     std::ostringstream out;
     switch (change.result) {
     case GadgetChange::Result::Missing: out << "no UAC2 gadget function"; break;
-    case GadgetChange::Result::Unchanged: out << change.function << " already p_chmask=" << change.after; break;
-    case GadgetChange::Result::Changed: out << change.function << " p_chmask " << change.before << " -> " << change.after; break;
+    case GadgetChange::Result::Unchanged: out << change.function << (change.rate ? " already p_srate=" : " already p_chmask=") << change.after; break;
+    case GadgetChange::Result::Changed:
+        out << change.function << (change.rate ? " p_srate " : " p_chmask ") << change.before << " -> " << change.after; break;
     case GadgetChange::Result::Failed: out << "gadget change failed: " << change.error; break;
     }
     return out.str();

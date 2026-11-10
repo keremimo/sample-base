@@ -135,6 +135,38 @@ class RecoveryScriptTests(unittest.TestCase):
                 self.assertEqual(os.readlink(config / name), str(configfs / "ac50/functions" / name))
             self.assertFalse(saved.exists())
 
+    def test_gadget_rate_restored_before_stock(self):
+        source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            systemctl = root / "systemctl"
+            systemctl.write_text('#!/bin/sh\nif [ "$1" = is-system-running ]; then echo running; exit 0; fi\n')
+            systemctl.chmod(0o755)
+            configfs, saved = root / "configfs", root / "saved"
+            function = configfs / "ac50/functions/uac2.audio"
+            function.mkdir(parents=True)
+            (function / "p_chmask").write_text("3\n")
+            for name in ("p_srate", "c_srate"):
+                (function / name).write_text("96000\n")
+            (configfs / "ac50/UDC").write_text("fcc00000.usb\n")
+            config = configfs / "ac50/configs/c.1"
+            config.mkdir(parents=True)
+            (config / "uac2.audio").symlink_to("../../functions/uac2.audio")
+            script = root / "restore.sh"
+            script.write_text(source.replace("/bin/systemctl", shlex.quote(str(systemctl)))
+                              .replace("/sys/kernel/config/usb_gadget", str(configfs))
+                              .replace("/run/sample-base-uac2-p_chmask", str(saved)))
+            # The mask was never widened, only the rate changed; an older line with no rate means 44.1 kHz.
+            for line in (str(function) + " 3 44100\n", str(function) + " 3\n"):
+                for name in ("p_srate", "c_srate"):
+                    (function / name).write_text("96000\n")
+                saved.write_text(line)
+                subprocess.run(["sh", str(script)], check=True, env={**os.environ, "FIXTURE_ROOT": temp})
+                for name in ("p_srate", "c_srate"):
+                    self.assertEqual((function / name).read_text(), "44100\n")
+                self.assertEqual(os.readlink(config / "uac2.audio"), str(function))
+                self.assertFalse(saved.exists())
+
     def test_lent_card_taken_back_before_stock(self):
         source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
         with tempfile.TemporaryDirectory() as temp:

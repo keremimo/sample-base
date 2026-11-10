@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "runtime/controller.h"
+#include "drivers/usb_gadget.h"
 #include "runtime/control_socket.h"
 #include "runtime/util.h"
 #include "surface/controls.h"
@@ -14,7 +15,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 } // namespace
 
-Controller::Controller(App& app, bool required, UsbAudioOutput& usb) : app(app), surface_required(required), usb_output(usb) {
+Controller::Controller(App& app, bool required, UsbAudioOutput& usb, bool usb_rate)
+    : app(app), surface_required(required), usb_output(usb), usb_rate_follows(usb_rate) {
     catalog = {midi.json(), midi.outputs(), midi.open_ports()};
     require(!required || midi.has_surface(), "Control surface unavailable; use --no-surface only for a headless/host test");
 }
@@ -48,6 +50,20 @@ void Controller::follow_card(Session& session) {
     session.card_returns.store(status.returns);
 }
 
+// Service thread: the USB-C audio gadget offers the computer the rate the
+// audio device runs at, so a DAW records and plays at it. Rewriting the rate
+// rebinds the gadget (USB audio, MIDI and SSH drop for about a second), so
+// never while the card is lent or on its way, and once a rate: a failed
+// change keeps the old rate, and USB-C audio converts as before.
+void Controller::follow_usb_rate(Session& session) {
+    unsigned rate = session.audio.rate.load();
+    if (!usb_rate_follows || rate == usb_rate_tried || card.status().state != CardShareState::Home) return;
+    usb_rate_tried = rate;
+    auto change = set_uac2_rate(rate);
+    if (change.result == GadgetChange::Result::Changed || change.result == GadgetChange::Result::Failed)
+        std::cout << "USB-C audio: " << describe(change) << std::endl;
+}
+
 // Service thread. Keeps the surface state and packet log for the `surface`
 // and `surface-log` commands. After a queue overflow the state restarts empty.
 void Controller::record_surface_packets() {
@@ -69,6 +85,7 @@ void Controller::poll_platform(Session& session) {
     for (unsigned n = 0; n < jack_count; ++n) session.jacks[n].store(jacks.state(Jack(n))); // -1 once the card is lost.
     card.poll();
     follow_card(session);
+    follow_usb_rate(session);
     app.service(hardware);
     follow_card(session); // What the app asked of it shows at once
     if (power.poll()) session.last_input.store(pack_last_input(InputKind::Power, 0, power.pressed()));
