@@ -57,6 +57,7 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 | Hook | Thread | When |
 | --- | --- | --- |
 | `render(input, output)` | audio | Every 128 frames (2.9 ms). Fill `output` from `input`; both are interleaved stereo S32 at 44.1 kHz. Input is silent without capture. |
+| `stems()` | audio | Right after each `render()`. Optional: a `UsbStems` block (`drivers/usb_audio.h`) the app wrote in `render()`, one mono float channel per track, which a computer records on USB-C channels 3–18. The default, null, sends silence there. |
 | `surface(event)` | MIDI | Every control-surface message. `event.pad` is 0–15 for a pad's note-on, note-off or pressure; `event.input` names a button or control (`surface/controls.h`); `event.syncing` marks the startup position replies. |
 | `midi(port, packet)` | MIDI | Every packet from an external port (DIN or USB MIDI), including clock and SysEx. |
 | `midi_lost()` | MIDI | An external MIDI input disappeared; silence its notes. |
@@ -95,8 +96,9 @@ itself. The system demo (`src/demos/system/`) reads all of these.
   the mixer, brightness, clock, power, storage and `usb-output` commands
   all work for every app (see [HARDWARE.md](HARDWARE.md)).
 - **USB-C audio out:** whenever a computer records from the MPC over USB-C,
-  it gets exactly what `render()` wrote, after the app's own volume. The
-  app does nothing for it; `--usb-output off` or `usb-output off` turns it
+  it gets exactly what `render()` wrote, after the app's own volume, on
+  channels 1 and 2, and whatever `stems()` returns on 3 to 18. The app does
+  nothing for the main mix; `--usb-output off` or `usb-output off` turns it
   off.
 - **Lights:** the runtime sends only what changed, at most 48 messages per
   pass, and on exit turns off every light the app set.

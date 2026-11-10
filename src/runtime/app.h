@@ -17,6 +17,7 @@ class Platform;
 class PowerButton;
 class SystemServices;
 class UsbAudioOutput;
+struct UsbStems;
 
 // One control-surface message, decoded. `input` names the button or control
 // (Kind::None for pads); `pad` is 0-15 for a pad's note-on, note-off or
@@ -62,6 +63,11 @@ public:
     // from `input`, both interleaved stereo S32. Input is silent when capture
     // is unavailable.
     virtual void render(const AudioBlock& input, AudioBlock& output) = 0;
+    // Audio thread, right after each render(): that block's stems, one mono
+    // channel per track, which a computer records over USB-C beside the main
+    // mix (channels 3 to 18), or null for silence there. The app owns the
+    // block and writes it in render().
+    virtual const UsbStems* stems() const { return nullptr; }
 
     // MIDI thread: a channel message from the control surface. Wheel Push
     // never arrives while it returns to the stock app.

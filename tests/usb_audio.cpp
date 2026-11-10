@@ -2,7 +2,7 @@
 // A fake UAC2 gadget card in front of ALSA's null PCM, both ways: discovery
 // by driver name, waiting while the host is idle, opening at the host's rate,
 // sample conversion to and from 44.1 kHz and reopening when the host changes
-// rate or stops.
+// rate or stops, and an 18-channel gadget carrying the main mix and stems.
 #include "drivers/usb_audio.h"
 #include <alsa/asoundlib.h>
 #include <cassert>
@@ -16,6 +16,7 @@ static std::atomic<bool> gadget {false};
 static std::atomic<long> rate {0}, playback_rate {0};
 static std::atomic<unsigned> pcm_opens {0}, pcm_closes {0}, reads {0};
 static std::atomic<unsigned> playback_opens {0}, playback_closes {0}, writes {0}, signal_frames {0}, wrong_frames {0};
+static std::atomic<unsigned> gadget_channels {0}, stem_frames {0}; // 0: the PCM's own channel count
 static std::mutex name_lock;
 static std::string opened, opened_playback;
 static int fake_ctl = 0;
@@ -50,6 +51,12 @@ extern "C" int __wrap_snd_pcm_close(snd_pcm_t* pcm) {
     ++(snd_pcm_stream(pcm) == SND_PCM_STREAM_CAPTURE ? pcm_closes : playback_closes);
     return __real_snd_pcm_close(pcm);
 }
+extern "C" int __real_snd_pcm_hw_params_get_channels_min(const snd_pcm_hw_params_t*, unsigned*);
+extern "C" int __wrap_snd_pcm_hw_params_get_channels_min(const snd_pcm_hw_params_t* params, unsigned* value) {
+    int result = __real_snd_pcm_hw_params_get_channels_min(params, value);
+    if (result >= 0 && gadget_channels) *value = gadget_channels; // The gadget offers exactly its mask's channels.
+    return result;
+}
 extern "C" int __wrap_snd_pcm_wait(snd_pcm_t*, int) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); return 1; }
 // Host audio: left 0.5, right -0.5, as S32_LE (the first format offered).
 extern "C" snd_pcm_sframes_t __wrap_snd_pcm_readi(snd_pcm_t*, void* buffer, snd_pcm_uframes_t frames) {
@@ -60,12 +67,20 @@ extern "C" snd_pcm_sframes_t __wrap_snd_pcm_readi(snd_pcm_t*, void* buffer, snd_
 }
 // What the host records. The MPC plays left 0.5, right -0.5: every frame is
 // silence while the ring primes, that exact signal, or a ramp between the two.
+// With 18 channels, stem s plays (s + 1) / 32 after them.
 extern "C" snd_pcm_sframes_t __wrap_snd_pcm_writei(snd_pcm_t*, const void* buffer, snd_pcm_uframes_t frames) {
     ++writes;
+    unsigned stride = gadget_channels ? gadget_channels.load() : 2;
     auto* samples = static_cast<const int32_t*>(buffer);
     for (snd_pcm_uframes_t n = 0; n < frames; ++n) {
-        int32_t left = samples[2 * n], right = samples[2 * n + 1];
-        if (left == 0x40000000 && right == int32_t(0xc0000000u)) ++signal_frames;
+        const int32_t* frame = samples + stride * n;
+        int32_t left = frame[0], right = frame[1];
+        if (left == 0x40000000 && right == int32_t(0xc0000000u)) {
+            ++signal_frames;
+            bool stems = stride > 2;
+            for (unsigned s = 0; s + 2 < stride; ++s) stems = stems && frame[2 + s] == int32_t((s + 1) * (0x80000000u / 32));
+            if (stems) ++stem_frames;
+        }
         else if (left < 0 || left > 0x40000000 || std::abs(int64_t(left) + right) > 1) ++wrong_frames;
     }
     return snd_pcm_sframes_t(frames);
@@ -142,7 +157,7 @@ static void output() {
     assert(usb.rate() == 48000 && playback_opens == 1 && pcm_opens == 3);
     { std::lock_guard<std::mutex> lock(name_lock); assert(opened_playback == "hw:CARD=UAC2Gadget,DEV=0"); }
     auto json = usb.json();
-    assert(json.find("\"channels\":2,\"bits\":32,") != std::string::npos && json.find("\"trim_ppm\":") != std::string::npos);
+    assert(json.find("\"channels\":2,\"stems\":0,\"bits\":32,") != std::string::npos && json.find("\"trim_ppm\":") != std::string::npos);
     auto output = usb.stats(); // What the system page shows: the same counters as json().
     assert(output.state == UsbStreamState::Running && output.rate == 48000 && output.channels == 2 && output.bits == 32);
     assert(output.opens == 1);
@@ -173,6 +188,19 @@ static void output() {
     { std::lock_guard<std::mutex> lock(name_lock); assert(opened_playback == "plughw:Other"); }
     usb.stop();
     assert(playback_closes == 4 && wrong_frames == 0);
+
+    // The gadget widened for stems: main mix on 1-2, track s on 3 + s.
+    UsbStems stems {};
+    for (unsigned s = 0; s < usb_stem_count; ++s)
+        for (auto& sample : stems.track[s]) sample = float(s + 1) / 32;
+    gadget = true; gadget_channels = 18; playback_rate = 44100;
+    usb.start("auto");
+    wait_for([&] { return usb.state() == UsbStreamState::Running; });
+    assert(usb.stats().channels == 18 && usb.stems() == 16 && usb.json().find("\"channels\":18,\"stems\":16,") != std::string::npos);
+    wait_for([&] { usb.push(block.data(), 128, &stems); return stem_frames > 0; });
+    usb.stop();
+    assert(wrong_frames == 0);
+    gadget_channels = 0; playback_rate = 0;
 }
 
 int main() {

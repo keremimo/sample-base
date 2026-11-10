@@ -31,9 +31,10 @@ inline void pcm_store(float sample, uint8_t* bytes, unsigned width) {
     for (unsigned n = 0; n < width; ++n) bytes[n] = uint8_t(bits >> (8 * n));
 }
 
-// Linear-interpolating rate converter for stereo frames. A computer chooses
-// the USB rate; the AK4558 runs at 44.1 kHz. Output lags input by one frame.
-class LinearResampler {
+// Linear-interpolating rate converter for frames of `Channels` samples. A
+// computer chooses the USB rate; the AK4558 runs at 44.1 kHz. Output lags
+// input by one frame.
+template <unsigned Channels> class FrameResampler {
 public:
     void reset(unsigned input_rate, unsigned output_rate) {
         base = step = input_rate && output_rate ? double(input_rate) / output_rate : 1.0;
@@ -42,20 +43,32 @@ public:
     // Scales the conversion by `factor` from the next frame on, without a
     // jump: above 1 it reads input slightly faster. See drift_trim().
     void trim(double factor) { step = base * factor; }
-    template <class Emit> void feed(float left, float right, Emit&& emit) {
-        if (!primed) { last_left = left; last_right = right; primed = true; return; }
+    // `emit` gets each converted frame as a pointer to `Channels` samples.
+    template <class Emit> void feed(const float* frame, Emit&& emit) {
+        if (!primed) { std::copy(frame, frame + Channels, last.begin()); primed = true; return; }
         while (phase < 1.0) {
             float t = float(phase);
-            emit(last_left + (left - last_left) * t, last_right + (right - last_right) * t);
+            for (unsigned c = 0; c < Channels; ++c) mixed[c] = last[c] + (frame[c] - last[c]) * t;
+            emit(static_cast<const float*>(mixed.data()));
             phase += step;
         }
         phase -= 1.0;
-        last_left = left; last_right = right;
+        std::copy(frame, frame + Channels, last.begin());
     }
 private:
     double base = 1.0, step = 1.0, phase = 0;
-    float last_left = 0, last_right = 0;
+    std::array<float, Channels> last {}, mixed {};
     bool primed = false;
+};
+
+// The stereo converter, fed and emitting left and right.
+class LinearResampler : public FrameResampler<2> {
+public:
+    using FrameResampler<2>::feed;
+    template <class Emit> void feed(float left, float right, Emit&& emit) {
+        const float frame[2] {left, right};
+        feed(frame, [&](const float* out) { emit(out[0], out[1]); });
+    }
 };
 
 // Two crystals never agree exactly: the AK4558's 44.1 kHz and a computer's USB
@@ -70,12 +83,13 @@ inline double drift_trim(double average_fill, double target) {
     return 1.0 + std::clamp((average_fill - target) * gain, -limit, limit);
 }
 
-// Stereo float frames from one producer thread to one consumer thread, either
+// Float frames of `Channels` interleaved samples (stereo unless stated) from
+// one producer thread to one consumer thread, either
 // way round the audio thread. The consumer waits until `prime` frames are
 // buffered before it starts, and again after it runs dry, so a clock-domain
 // hand-off such as USB costs one short silence rather than a stream of clicks.
 // A full ring drops the newest frames.
-template <unsigned Capacity> class FrameRing {
+template <unsigned Capacity, unsigned Channels = 2> class FrameRing {
     static_assert(Capacity >= 2 && (Capacity & (Capacity - 1)) == 0, "Capacity must be a power of two");
 public:
     unsigned push(const float* frames, unsigned count) {
@@ -83,7 +97,7 @@ public:
         unsigned room = Capacity - (w - r), n = std::min(count, room);
         for (unsigned i = 0; i < n; ++i) {
             unsigned slot = (w + i) & (Capacity - 1);
-            data[2 * slot] = frames[2 * i]; data[2 * slot + 1] = frames[2 * i + 1];
+            std::copy(frames + Channels * i, frames + Channels * (i + 1), data.begin() + Channels * slot);
         }
         write.store(w + n, std::memory_order_release);
         if (n < count) overflows.fetch_add(1, std::memory_order_relaxed);
@@ -99,12 +113,12 @@ public:
         if (!primed && available >= std::max(prime, count)) primed = true;
         if (!primed || available < count) {
             if (primed) { underruns.fetch_add(1, std::memory_order_relaxed); primed = false; }
-            std::fill(frames, frames + 2 * count, 0.0f);
+            std::fill(frames, frames + Channels * count, 0.0f);
             return false;
         }
         for (unsigned i = 0; i < count; ++i) {
             unsigned slot = (r + i) & (Capacity - 1);
-            frames[2 * i] = data[2 * slot]; frames[2 * i + 1] = data[2 * slot + 1];
+            std::copy(data.begin() + Channels * slot, data.begin() + Channels * (slot + 1), frames + Channels * i);
         }
         read.store(r + count, std::memory_order_release);
         return true;
@@ -114,7 +128,7 @@ public:
     unsigned buffered() const { return write.load(std::memory_order_acquire) - read.load(std::memory_order_acquire); }
     std::atomic<unsigned> overflows {0}, underruns {0};
 private:
-    std::array<float, Capacity * 2> data {};
+    std::array<float, Capacity * Channels> data {};
     std::atomic<unsigned> read {0}, write {0};
     std::atomic<bool> flush_requested {false};
     bool primed = false; // Consumer only.

@@ -3,6 +3,7 @@
 #include "drivers/audio.h"
 #include "drivers/display.h"
 #include "drivers/usb_audio.h"
+#include "drivers/usb_gadget.h"
 #include "runtime/control_socket.h"
 #include "runtime/controller.h"
 #include "runtime/reports.h"
@@ -21,7 +22,7 @@ volatile std::sig_atomic_t interrupted = 0;
 void signal_handler(int) { interrupted = 1; }
 
 // AudioDevice's callback: the app renders each block, and the computer
-// records what it rendered when it is recording over USB-C.
+// records what it rendered, and its stems, when it is recording over USB-C.
 struct AudioRoute { App& app; UsbAudioOutput& usb; };
 // The screen's counters for the status line.
 void record_screen(ScreenStats& screen, const Display::Stats& stats, std::chrono::steady_clock::duration draw) {
@@ -37,7 +38,7 @@ void record_screen(ScreenStats& screen, const Display::Stats& stats, std::chrono
 void render(void* context, const AudioBlock& input, AudioBlock& output) {
     auto& route = *static_cast<AudioRoute*>(context);
     route.app.render(input, output);
-    route.usb.push(output.data(), audio_frames);
+    route.usb.push(output.data(), audio_frames, route.app.stems());
 }
 } // namespace
 
@@ -46,6 +47,9 @@ int run_app(App& app, const Options& options) {
     std::unique_ptr<Display> display;
     juce::Typeface::Ptr prompt_font;
     if (!options.headless) { prompt_font = load_typeface(); display = std::make_unique<Display>(); }
+    // Before anything opens audio or MIDI: the gadget's rebind replaces its cards.
+    if (options.usb_output == "auto" && options.usb_stems)
+        std::cout << "USB-C audio: " << describe(widen_uac2_playback(UsbAudioOutput::channels)) << std::endl;
     UsbAudioOutput usb_output; // Outlives the audio thread, which feeds it.
     AudioDevice audio(options.audio_output, options.audio_input);
     Controller controller(app, options.surface_required, usb_output);

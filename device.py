@@ -137,7 +137,9 @@ class Device:
             self.run("ln -s " + release + " " + ACTIVE + ".next && mv -Tf " + ACTIVE + ".next " + ACTIVE)
             self.run("cat > " + UNIT_PATH, input=service_unit(release, seconds, app))
             self.run("systemctl daemon-reload && systemctl start sample-base.service")
-            deadline = time.monotonic() + 10
+            # The first start after a boot rebinds the USB gadget for stems,
+            # dropping this SSH link until the computer brings it back.
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 state = self.run("systemctl is-active sample-base.service", check=False)
                 if state.stdout.strip() in ("failed", "inactive"):

@@ -71,10 +71,16 @@ class RuntimeTests(unittest.TestCase):
             binary = Path(temp) / "usb-audio"
             symbols = ("snd_card_next", "snd_ctl_open", "snd_ctl_close", "snd_ctl_card_info", "snd_ctl_card_info_get_driver",
                        "snd_ctl_card_info_get_id", "snd_ctl_elem_read", "snd_pcm_open", "snd_pcm_close", "snd_pcm_wait",
-                       "snd_pcm_readi", "snd_pcm_writei")
+                       "snd_pcm_readi", "snd_pcm_writei", "snd_pcm_hw_params_get_channels_min")
             compile_fixture(binary, "tests/usb_audio.cpp", "src/drivers/usb_audio.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=20)
+
+    def test_usb_gadget_widened_for_stems(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "usb-gadget"
+            compile_fixture(binary, "tests/usb_gadget.cpp", "src/drivers/usb_gadget.cpp")
+            subprocess.run([str(binary), temp], check=True, timeout=10)
 
     @unittest.skipUnless((ROOT / "build/sample-base").is_file(), "build application first")
     def test_headless_control_commands_and_clean_shutdown(self):

@@ -211,12 +211,17 @@ std::string UsbAudioOutput::requested() const {
     return requested_name;
 }
 
-void UsbAudioOutput::push(const int32_t* frames, unsigned count) {
+void UsbAudioOutput::push(const int32_t* frames, unsigned count, const UsbStems* stems) {
     if (!accepting.load(std::memory_order_acquire)) return;
-    std::array<float, 2 * 128> block;
+    if (stems) count = std::min(count, usb_stem_frames);
     for (unsigned done = 0; done < count;) {
-        unsigned n = std::min(count - done, unsigned(block.size() / 2));
-        for (unsigned i = 0; i < 2 * n; ++i) block[i] = float(double(frames[2 * done + i]) / 2147483648.0);
+        unsigned n = std::min(count - done, usb_stem_frames);
+        for (unsigned i = 0; i < n; ++i) {
+            float* frame = block.data() + channels * i;
+            frame[0] = float(double(frames[2 * (done + i)]) / 2147483648.0);
+            frame[1] = float(double(frames[2 * (done + i) + 1]) / 2147483648.0);
+            for (unsigned s = 0; s < usb_stem_count; ++s) frame[2 + s] = stems ? stems->track[s][done + i] : 0.0f;
+        }
         ring.push(block.data(), n);
         done += n;
     }
@@ -226,10 +231,10 @@ void UsbAudioOutput::run(std::string requested) {
     raise_priority();
     constexpr unsigned chunk_frames = 32;
     Stream playback;
-    LinearResampler resampler;
+    FrameResampler<channels> resampler;
     std::vector<uint8_t> raw;
-    std::vector<float> staged; // Converted frames not yet encoded, interleaved.
-    std::array<float, 2 * chunk_frames> chunk;
+    std::vector<float> staged; // Converted frames not yet encoded, `channels` samples each.
+    std::array<float, channels * chunk_frames> chunk;
     snd_pcm_uframes_t pending = 0, offset = 0; // Encoded frames in `raw` still to write, and where they start.
     long open_rate = 0;
     double fill_sum = 0; unsigned fill_count = 0;
@@ -241,20 +246,20 @@ void UsbAudioOutput::run(std::string requested) {
     };
     // One period from the ring: converted to the computer's rate, then encoded.
     auto render_period = [&] {
-        while (staged.size() < 2 * playback.period) {
+        while (staged.size() < channels * playback.period) {
             ring.pull(chunk.data(), chunk_frames, prime_frames); // Silence while priming.
             for (unsigned n = 0; n < chunk_frames; ++n)
-                resampler.feed(chunk[2 * n], chunk[2 * n + 1], [&](float l, float r) { staged.push_back(l); staged.push_back(r); });
+                resampler.feed(chunk.data() + channels * n, [&](const float* frame) { staged.insert(staged.end(), frame, frame + channels); });
         }
+        unsigned carried = std::min(playback.channels, channels);
         for (snd_pcm_uframes_t frame = 0; frame < playback.period; ++frame) {
-            float left = staged[2 * frame], right = staged[2 * frame + 1];
+            const float* in = staged.data() + channels * frame;
             uint8_t* bytes = raw.data() + size_t(frame) * playback.channels * playback.width;
-            for (unsigned channel = 0; channel < playback.channels; ++channel) {
-                float sample = playback.channels == 1 ? 0.5f * (left + right) : channel == 0 ? left : channel == 1 ? right : 0.0f;
-                pcm_store(sample, bytes + channel * playback.width, playback.width);
-            }
+            if (playback.channels == 1) { pcm_store(0.5f * (in[0] + in[1]), bytes, playback.width); continue; }
+            for (unsigned channel = 0; channel < playback.channels; ++channel)
+                pcm_store(channel < carried ? in[channel] : 0.0f, bytes + channel * playback.width, playback.width);
         }
-        staged.erase(staged.begin(), staged.begin() + 2 * playback.period);
+        staged.erase(staged.begin(), staged.begin() + channels * playback.period);
         pending = playback.period; offset = 0;
     };
     // An underrun or suspend restarts the stream; anything else closes it until the next check.
@@ -278,7 +283,7 @@ void UsbAudioOutput::run(std::string requested) {
                 if (open_stream(target.pcm, SND_PCM_STREAM_PLAYBACK, target.rate, input_rate, playback)) {
                     open_rate = target.rate; ++opens;
                     raw.assign(playback.period * playback.channels * playback.width, 0);
-                    staged.clear(); staged.reserve(2 * (playback.period + chunk_frames * 2));
+                    staged.clear(); staged.reserve(channels * (playback.period + chunk_frames * 2));
                     pending = 0; fill_sum = 0; fill_count = 0;
                     resampler.reset(input_rate, playback.rate);
                     ring.flush();
@@ -325,7 +330,7 @@ std::string UsbAudioOutput::json() const {
     std::ostringstream out;
     out << "{\"state\":" << json_string(usb_stream_state_names[size_t(now.state)]) << ",\"requested\":" << json_string(wanted)
         << ",\"device\":" << json_string(device) << ",\"rate\":" << now.rate << ",\"channels\":" << now.channels
-        << ",\"bits\":" << now.bits << ",\"buffered\":" << now.buffered << ",\"trim_ppm\":" << now.trim_ppm
+        << ",\"stems\":" << stems() << ",\"bits\":" << now.bits << ",\"buffered\":" << now.buffered << ",\"trim_ppm\":" << now.trim_ppm
         << ",\"overflows\":" << now.overflows << ",\"underruns\":" << now.underruns
         << ",\"xruns\":" << now.xruns << ",\"opens\":" << now.opens << '}';
     return out.str();

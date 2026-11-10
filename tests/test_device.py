@@ -107,6 +107,35 @@ class RecoveryScriptTests(unittest.TestCase):
                     self.assertEqual(calls.read_text().strip(), "start ac50.service")
 
 
+    def test_gadget_mask_restored_before_stock(self):
+        source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            systemctl = root / "systemctl"
+            systemctl.write_text('#!/bin/sh\nif [ "$1" = is-system-running ]; then echo running; exit 0; fi\n'
+                                 'cat "$FIXTURE_ROOT/configfs/ac50/UDC" "$FIXTURE_ROOT/configfs/ac50/functions/uac2.audio/p_chmask" > "$FIXTURE_ROOT/at-start"\n')
+            systemctl.chmod(0o755)
+            configfs, saved = root / "configfs", root / "saved"
+            function = configfs / "ac50/functions/uac2.audio"
+            function.mkdir(parents=True)
+            (function / "p_chmask").write_text("262143\n")
+            (configfs / "ac50/UDC").write_text("fcc00000.usb\n")
+            config = configfs / "ac50/configs/c.1"
+            config.mkdir(parents=True)
+            for name in ("uac2.audio", "ncm.network"):
+                (config / name).symlink_to("../../functions/" + name)
+            script = root / "restore.sh"
+            script.write_text(source.replace("/bin/systemctl", shlex.quote(str(systemctl)))
+                              .replace("/sys/kernel/config/usb_gadget", str(configfs))
+                              .replace("/run/sample-base-uac2-p_chmask", str(saved)))
+            saved.write_text(str(function) + " 3\n")
+            subprocess.run(["sh", str(script)], check=True, env={**os.environ, "FIXTURE_ROOT": temp})
+            self.assertEqual((root / "at-start").read_text(), "fcc00000.usb\n3\n")
+            for name in ("uac2.audio", "ncm.network"):
+                self.assertEqual(os.readlink(config / name), str(configfs / "ac50/functions" / name))
+            self.assertFalse(saved.exists())
+
+
 class SdAutorunTests(unittest.TestCase):
     OWNER = "#!/bin/sh\n# MPC_PLUGINS_SD_START\ntrap '/bin/sh \"$(dirname -- \"$0\")/../MPC-Plugins/start-plugins.sh\" x' EXIT\nset -eu\necho ssh\n"
 

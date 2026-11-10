@@ -48,7 +48,7 @@ The kernel sources remain under their own upstream licences.
 | Surface inputs and outputs | UART3, 4,000,000 baud, `Control Surface` raw MIDI | `HardwareMidi` receives all channel, pressure, system-common, realtime and bounded SysEx messages; queues complete outbound messages |
 | External MIDI | UART5, 31,250 baud, `External MIDI` raw MIDI | The same discovered bidirectional MIDI interface; incoming channel messages play the demo synth at their native MIDI pitches |
 | USB host MIDI | Kernel USB audio/MIDI driver | Input/output subdevices are discovered and reopened after hotplug; disconnect and read failure panic the demo synth |
-| USB audio | Kernel ALSA PCM devices; USB-C device audio from the `UAC2_Gadget` card (`CONFIG_USB_CONFIGFS_F_UAC2`) | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; `UsbAudioInput` finds the gadget by driver name, waits for the host and delivers its capture stream at 44.1 kHz; `UsbAudioOutput` sends every app's output to a computer recording from the gadget; no fixed USB card number is assumed |
+| USB audio | Kernel ALSA PCM devices; USB-C device audio from the `UAC2_Gadget` card (`CONFIG_USB_CONFIGFS_F_UAC2`) | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; `UsbAudioInput` finds the gadget by driver name, waits for the host and delivers its capture stream at 44.1 kHz; `UsbAudioOutput` sends every app's output, and its stems, to a computer recording from the gadget; no fixed USB card number is assumed |
 | Display | SPI3 ST7796S-compatible panel, 320 × 240, rotation 270, SPI at 25 MHz; no vsync (the mode has no refresh rate, no tearing-effect line) | `Display` finds the connected panel across DRM cards and pushes JUCE software images from a worker thread, sending only the changed rows and columns as damage clips: a whole screen takes about 54 ms, small changes under 5 ms. It attempts to restore the previous CRTC on release |
 | Backlight | PWM4, seven brightness indices, maximum index 6 | `Platform` discovers the actual sysfs range, validates explicit changes and restores its original brightness on normal exit |
 | Power | `mains-power`, ADC supply voltage, kernel power handling | `Platform` reads actual power-supply attributes; `SystemServices` observes logind sleep/shutdown notifications and requests a clean app exit |
@@ -176,9 +176,11 @@ on by default; `--usb-output off` starts without it.
 
 The device's gadget configuration on 1.3.0.12
 (`/sys/kernel/config/usb_gadget/ac50/functions/uac2.audio`, read on the MPC)
-has `p_chmask=3`, `p_ssize=4`, `p_srate=48000` and `shared_clock=1`, on the
-card with ID `UAC2Gadget`. The computer can therefore record only stereo
-S32_LE at 48 kHz. The kernel's `u_audio.c` gives the rest: the gadget's
+has `p_chmask=3`, `p_ssize=4`, `p_srate=44100` and `shared_clock=1`, on the
+card with ID `UAC2Gadget`; the stock service builds it from
+`/usr/lib/az0x-usb-gadget/ac50.scheme`, linking `uac2.audio`, `ncm.network`
+and `midi.midi` into configuration `c.1` in that order. As built, the
+computer can record only stereo S32_LE at 44.1 kHz. The kernel's `u_audio.c` gives the rest: the gadget's
 playback PCM is the stream to the computer, and each USB packet takes
 rate × pitch / interval frames from its ALSA buffer. The PCM-interface
 control `Playback Rate` reads 0 until the computer starts recording.
@@ -186,11 +188,42 @@ control `Playback Rate` reads 0 until the computer starts recording.
 | Stage | What happens |
 | --- | --- |
 | Waiting | Every 250 ms the output thread looks for the gadget and reads `Playback Rate`. While it is 0 nothing is opened, and `push()` drops blocks rather than queueing audio for a recording that has not started. |
-| Opening | At the computer's rate: 256-frame periods, a four-period buffer (21 ms at 48 kHz), started once the first full buffer is written. A rate change reopens; the rate returning to 0 closes. |
+| Opening | At the computer's rate: 256-frame periods, a four-period buffer (23 ms at 44.1 kHz), started once the first full buffer is written. A rate change reopens; the rate returning to 0 closes. |
 | Hand-off | The audio thread converts each block to float and pushes it into an 8,192-frame lock-free ring. The output thread primes it to 1,024 frames (23 ms), sending silence until then and again if it runs dry. |
 | Conversion | Linear interpolation from 44.1 kHz to the computer's rate, the converter the USB-C input uses in the other direction, then encoding to the gadget's sample format. |
 | Drift | The AK4558's clock and the computer's USB clock differ by tens of parts per million, enough to empty or fill the ring within minutes. Every 250 ms the ring's average fill sets a trim on the conversion (`drift_trim()` in [src/dsp/frame_ring.h](../src/dsp/frame_ring.h)): 2 ppm per frame away from 1,024, at most ±0.2 %, settling in about 11 seconds. A 100 ppm drift settles 50 frames above the target; against a Mac it settled between −15 and −48 ppm. |
 | Faults | A playback underrun (the thread was starved) re-prepares the stream and counts in `xruns`. Any other error closes it until the next check. |
+
+### Stems
+
+Beside the main mix, a computer can record each of an app's 16 tracks on its
+own channel. The stock gadget is stereo, so at start-up, before anything
+opens audio or MIDI, the runtime widens it (`widen_uac2_playback()` in
+[src/drivers/usb_gadget.h](../src/drivers/usb_gadget.h)):
+
+| Step | What happens |
+| --- | --- |
+| Find | The first `uac2.*` function under `/sys/kernel/config/usb_gadget/*/functions`. Without one nothing changes. |
+| Compare | Its `p_chmask` against 18 channels (`0x3ffff`). Already there (every later start until a reboot): nothing is touched. |
+| Save | The first time, `/run/sample-base-uac2-p_chmask` gets the function's directory and its original mask. |
+| Rebind | `UDC` is emptied and every function link taken out of the configuration (f_uac2 refuses a new mask, `EBUSY`, while any configuration links it, bound or not), `p_chmask` written, the links made again in their old order (configfs lists them newest first) to each function's absolute directory (configfs resolves a relative target from the caller's working directory, not the link's) and `UDC` given back its controller. The Mac sees the MPC leave and come back; USB networking (SSH) and USB MIDI drop for about a second. |
+| Restore | `install/restore-stock.sh` puts the saved mask back the same way before it starts the stock app, which expects stereo. A swap between apps keeps the wide gadget. |
+
+The kernel (`f_uac2.c`, `UAC2_CHANNEL_MASK`) allows at most 27 channels a
+direction, too few for 16 stereo tracks and the main mix (34), so each stem
+is mono. Bandwidth is not the limit: 18 channels of S32 at 44.1 kHz is 432
+bytes a microframe, under high speed's 1,024. The channel order is fixed:
+
+| Channels | Carry |
+| --- | --- |
+| 1–2 | The main mix, exactly as before |
+| 3–18 | Track 1–16 stems from `App::stems()`, silent for apps without stems |
+
+The stems share the main mix's ring, rate conversion and drift trim, so all
+18 stay sample-aligned. The gadget names channels by USB spatial position
+(front left, front right, centre, LFE, …); a DAW lists them as inputs 1–18.
+`--usb-stems off` leaves the gadget as the stock service built it.
+`usb-output` reports `stems`, the stems the open stream carries.
 
 The gadget's `Playback Pitch 1000000` control could absorb drift instead,
 by changing packet sizes, but it is left alone, like `Capture Pitch`.
@@ -205,7 +238,7 @@ python3 device.py ctl usb-output on
 ```
 
 `usb-output` returns JSON with the state (`stopped`, `missing`, `waiting`,
-`running` or `failed`), the requested and opened device, rate, channels, bits,
+`running` or `failed`), the requested and opened device, rate, channels, stems, bits,
 frames buffered, the current trim in ppm, ring overflows and underruns, PCM
 xruns and opens. `usb-output on` restarts with the `--usb-output` PCM, or the
 gadget when that was `off`. `status` reports `usb_output=STATE`.
@@ -633,8 +666,9 @@ battery shutdown threshold.
 Codec reset, speaker/mic power, mute delays, headphone detection and regulators
 belong to their kernel drivers and ALSA routing; `JackDetect` only reads
 what detection reports. The application does not
-write those GPIOs or codec registers directly. It does not rebuild the kernel,
-reconfigure the USB gadget or replace system services.
+write those GPIOs or codec registers directly. It does not rebuild the kernel
+or replace system services. Its one change to the USB gadget is the USB-C
+audio channel count for stems, which the recovery script undoes.
 
 All new hardware-facing behavior still requires physical qualification.
 See [VALIDATION.md](VALIDATION.md) for the offline tests and remaining checks.
