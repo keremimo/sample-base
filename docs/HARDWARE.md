@@ -72,8 +72,20 @@ adapter, so another application replaces them with its own `render()`.
 
 `HardwareMidi::Receive` is the input extension point. It receives the source
 port identity and a complete `MidiPacket`, including its MIDI channel and
-message length, plus monotonic receipt timestamps. These are userspace receipt
-times, not physical MIDI-wire timestamps. Surface messages and musical MIDI are kept separate. Device
+message length, plus monotonic receipt timestamps. Inputs are opened in
+alsa-lib's timestamped read mode (`SND_RAWMIDI_READ_TSTAMP`, kernel framing
+since Linux 5.14; the MPC runs 6.12 with alsa-lib 1.2.11), so the stamp is
+the kernel's CLOCK_MONOTONIC time as its driver (the UART's serial-generic,
+the gadget's f_midi, snd-usb-audio) received the bytes; where that mode is
+missing the read time stands in. They are not physical MIDI-wire timestamps.
+The MIDI loop sleeps in `HardwareMidi::wait()` (`ppoll` on every open input)
+rather than a fixed tick, so input is read as it arrives; an app's timed
+output (`App::midi_output`, `MidiOutput::wake_at`) sets how long it may sleep.
+The USB-C gadget carries MIDI: the stock configuration links `midi.midi`, the
+port is `f_midi` (driver `MIDI Gadget`) on the MPC and "MPC Sample" on a
+computer. A computer with no MIDI app open does not read it, so what is sent
+meanwhile waits in the gadget and arrives in one burst when an app opens the
+port. Surface messages and musical MIDI are kept separate. Device
 addresses, input/output direction and subdevices are discovered from ALSA,
 not inferred from card order. The surface is required for normal device
 operation; `--no-surface` is available for host/headless tests.
@@ -157,6 +169,10 @@ returns it low and releases the line. These commands do not change the
 undocumented `CV_SEL` or `CVCLK_RST` mux/reset lines. Event timestamps are
 kernel monotonic nanoseconds. The service loop is not a musical clock
 scheduler, and output timing/electrical routing requires hardware validation.
+An app may drive the output from the MIDI thread (`MidiOutput::sync`, timed by
+its own schedule); `ClockIo` takes a short lock for that. Melodee's CV clock
+was driven at up to 192 pulses a quarter this way; the jack's voltage has not
+been measured.
 
 `--audio-output NAME --audio-input NAME|off` selects another ALSA PCM. This
 base currently requires native 44.1 kHz, stereo S32, 128-frame periods and

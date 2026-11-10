@@ -39,6 +39,7 @@ int ClockIo::request(const char* name, bool output, bool high) {
     return -1;
 }
 ClockIo::~ClockIo() {
+    std::lock_guard<std::mutex> guard(lock);
     if (input_fd >= 0) close(input_fd);
     if (output_fd >= 0) {
         gpio_v2_line_values value {}; value.mask = 1;
@@ -47,11 +48,13 @@ ClockIo::~ClockIo() {
     }
 }
 bool ClockIo::input(bool enabled) {
+    std::lock_guard<std::mutex> guard(lock);
     if (!enabled) { if (input_fd >= 0) close(input_fd); input_fd = -1; sequence = 0; return true; }
     if (input_fd < 0) input_fd = request("CV_CLK_IN", false, false);
     return input_fd >= 0;
 }
 bool ClockIo::output(bool high) {
+    std::lock_guard<std::mutex> guard(lock);
     if (output_fd < 0) output_fd = request("CV_CLK_OUT", true, high);
     if (output_fd < 0) return false;
     gpio_v2_line_values value {}; value.mask = 1; value.bits = high ? 1 : 0;
@@ -59,6 +62,7 @@ bool ClockIo::output(bool high) {
     output_high = high; return true;
 }
 void ClockIo::poll() {
+    std::lock_guard<std::mutex> guard(lock);
     if (input_fd < 0) return;
     gpio_v2_line_event events[16];
     for (unsigned batch = 0; batch < 4; ++batch) {
@@ -74,6 +78,7 @@ void ClockIo::poll() {
     }
 }
 std::string ClockIo::json() const {
+    std::lock_guard<std::mutex> guard(lock);
     std::ostringstream out;
     out << "{\"input_enabled\":" << (input_fd >= 0 ? "true" : "false") << ",\"input_high\":" << (input_high ? "true" : "false")
         << ",\"output_enabled\":" << (output_fd >= 0 ? "true" : "false") << ",\"output_high\":" << (output_high ? "true" : "false")

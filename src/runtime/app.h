@@ -9,6 +9,7 @@
 #include <juce_graphics/juce_graphics.h>
 #include <chrono>
 #include <string>
+#include <vector>
 
 class ClockIo;
 class HardwareMixer;
@@ -44,6 +45,31 @@ struct Hardware {
     const MidiPorts& midi;            // MIDI ports as last scanned, once a second
 };
 
+// What an app may send from the MIDI thread, in App::midi_output(): MIDI to
+// an external port open now (DIN or USB, never the control surface) and the
+// CV_CLK_OUT sync line. The runtime calls the hook on every pass of its MIDI
+// loop: at least every 5 ms, as soon as input arrives, and as close after
+// the time asked for with wake_at() as the kernel wakes it (well under a
+// millisecond), so an app can keep its own schedule of timed messages.
+class MidiOutput {
+public:
+    using Clock = std::chrono::steady_clock;
+    virtual ~MidiOutput() = default;
+    // The external ports open now (the surface is left out); `output` says
+    // which can be written. Rescanned once a second, after USB hotplug.
+    virtual const std::vector<MidiPortInfo>& ports() const = 0;
+    // One complete message to `address`, written before this pass ends.
+    // False when that port is gone or its queue is full.
+    virtual bool send(const std::string& address, const MidiPacket& packet) = 0;
+    // CV_CLK_OUT high or low now. The first call takes the line (opt-in, as
+    // the `clock-out` command does); false when the kernel or another owner
+    // holds it, so an app should stop asking until the user turns it on
+    // again. On exit the runtime leaves it low and releases it.
+    virtual bool sync(bool high) = 0;
+    // Call the hook again by `at`; the earliest asked for in a pass wins.
+    virtual void wake_at(Clock::time_point at) = 0;
+};
+
 // What an application on sample-base provides. run_app() owns the hardware,
 // starts four threads and calls these hooks; each says which thread calls it.
 // Hooks on different threads run at the same time, so share state between
@@ -77,6 +103,9 @@ public:
     virtual void midi(const MidiPortInfo&, const MidiPacket&) {}
     // MIDI thread: an external input disappeared; silence its notes.
     virtual void midi_lost() {}
+    // MIDI thread, every pass of the MIDI loop (see MidiOutput): send
+    // external MIDI and drive the sync line, each at its time.
+    virtual void midi_output(MidiOutput&, Clock::time_point) {}
     // MIDI thread, every 5 ms: request surface lights. Only changes are sent,
     // so asking for the same colour again costs nothing.
     virtual void lights(SurfaceLights&, Clock::time_point) {}

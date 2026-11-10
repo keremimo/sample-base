@@ -6,7 +6,7 @@ CPPFLAGS := -Isrc -I$(JUCE) $(shell pkg-config --cflags freetype2 fontconfig als
 CXXFLAGS := -std=c++17 -O2 -pthread -MMD -MP
 CFLAGS := -O2 -MMD -MP
 LDLIBS := $(shell pkg-config --libs freetype2 fontconfig alsa libdrm libsystemd) -ldl -pthread -lrt
-MODULE_CPP := $(wildcard $(JUCE)/juce_core/*.cpp $(JUCE)/juce_events/*.cpp $(JUCE)/juce_graphics/*.cpp)
+MODULE_CPP := $(wildcard $(JUCE)/juce_core/*.cpp $(JUCE)/juce_events/*.cpp $(JUCE)/juce_graphics/*.cpp $(JUCE)/juce_audio_basics/*.cpp)
 MODULE_C := $(wildcard $(JUCE)/juce_core/*.c $(JUCE)/juce_graphics/*.c)
 # Every source under src/, at any depth up to src/a/b/; objects mirror the tree.
 SOURCES := $(wildcard src/*.cpp src/*/*.cpp src/*/*/*.cpp)

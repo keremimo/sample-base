@@ -54,6 +54,23 @@ private:
     std::string mixer_set_command(const std::string& argument);
     std::string usb_output_command(const std::string& argument);
 
+    // App::midi_output()'s view of the MIDI thread's ports and the sync line.
+    class Output : public MidiOutput {
+    public:
+        Output(HardwareMidi& midi, ClockIo& clock) : midi(midi), clock(clock) {}
+        const std::vector<MidiPortInfo>& ports() const override { return external; }
+        bool send(const std::string& address, const MidiPacket& packet) override;
+        bool sync(bool high) override { return clock.output(high); }
+        void wake_at(Clock::time_point at) override { if (at < wake) wake = at; }
+        void refresh(); // each pass: the external ports open now, when they changed
+        Clock::time_point wake = Clock::time_point::max();
+    private:
+        HardwareMidi& midi;
+        ClockIo& clock;
+        std::vector<MidiPortInfo> external;
+        unsigned seen = ~0u; // HardwareMidi::generation() last copied
+    };
+
     App& app;
     bool surface_required;
     UsbAudioOutput& usb_output;
@@ -67,6 +84,7 @@ private:
     ClockIo clock;
     PowerButton power;
     SurfaceLights lights;
+    Output output {midi, clock}; // MIDI thread: App::midi_output()
 
     // Surface diagnostics; the MIDI thread queues packets, the service thread keeps them.
     MidiQueue<256, MidiPacket> surface_events;

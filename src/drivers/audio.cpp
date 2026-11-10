@@ -28,7 +28,7 @@ void AudioDevice::configure(snd_pcm_t* pcm, bool capture) {
     check(snd_pcm_hw_params_set_channels(pcm, hw, audio_channels), "Set stereo audio");
     check(snd_pcm_hw_params_set_rate(pcm, hw, audio_rate, 0), "Set 44100 Hz");
     check(snd_pcm_hw_params_set_period_size(pcm, hw, audio_frames, 0), "Set 128-frame period");
-    snd_pcm_uframes_t buffer = audio_frames * 4;
+    snd_pcm_uframes_t buffer = audio_frames * (audio_queued_periods + 1);
     check(snd_pcm_hw_params_set_buffer_size_near(pcm, hw, &buffer), "Set PCM buffer");
     if (buffer < audio_frames * 2) throw std::runtime_error("PCM buffer is too small");
     check(snd_pcm_hw_params(pcm, hw), "Apply PCM format");

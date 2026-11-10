@@ -53,7 +53,8 @@ class RuntimeTests(unittest.TestCase):
             symbols = ("snd_card_next", "snd_ctl_open", "snd_ctl_close", "snd_ctl_card_info", "snd_ctl_card_info_get_id",
                        "snd_ctl_card_info_get_name", "snd_ctl_card_info_get_driver", "snd_ctl_rawmidi_next_device",
                        "snd_ctl_rawmidi_info", "snd_rawmidi_info_get_subdevices_count", "snd_rawmidi_info_get_subdevice_name",
-                       "snd_rawmidi_open", "snd_rawmidi_close", "snd_rawmidi_drop", "snd_rawmidi_read", "snd_rawmidi_write")
+                       "snd_rawmidi_open", "snd_rawmidi_close", "snd_rawmidi_drop", "snd_rawmidi_read", "snd_rawmidi_write",
+                       "snd_rawmidi_params_current")
             compile_fixture(binary, "tests/hardware_midi.cpp", "src/drivers/hardware_midi.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=5)

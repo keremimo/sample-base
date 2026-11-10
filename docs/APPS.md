@@ -61,6 +61,7 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 | `surface(event)` | MIDI | Every control-surface message. `event.pad` is 0–15 for a pad's note-on, note-off or pressure; `event.input` names a button or control (`surface/controls.h`); `event.syncing` marks the startup position replies. |
 | `midi(port, packet)` | MIDI | Every packet from an external port (DIN or USB MIDI), including clock and SysEx. |
 | `midi_lost()` | MIDI | An external MIDI input disappeared; silence its notes. |
+| `midi_output(out, now)` | MIDI | Every pass of the MIDI loop: at least every 5 ms, as soon as input arrives, and when the app asked to be woken (`out.wake_at()`). `out` sends complete messages to an external port open now (`out.ports()`; never the surface) and sets the `CV_CLK_OUT` sync line (`out.sync()`, taken on first use). For MIDI and sync output timed by the app's own schedule; see "Timed MIDI out" below. |
 | `lights(lights, now)` | MIDI | Every 5 ms. Ask for pad, fader, bank and button lights; only changes go to the surface. |
 | `draw(g)` | screen | Once per frame, as fast as the panel takes frames and at most 60 a second; animate from the clock, not the frame count. Paint the whole 320 × 240 screen. `load_typeface()` in `runtime/screen.h` gives the device font. |
 | `service(hardware)` | service | Every few milliseconds. Slow work: mixer routes, storage, files. |
@@ -110,6 +111,25 @@ itself. The system demo (`src/demos/system/`) reads all of these.
 - **Jacks:** headphone and line-out detection followed through ALSA control
   events, in `session()` for every thread, `jack()` on each change and the
   `jacks` command. Nothing is rerouted unless the app does it.
+
+## Timed MIDI out
+
+External MIDI arrives with the kernel's receive time in
+`MidiPacket::timestamp_ns` (CLOCK_MONOTONIC, the clock `steady_clock`
+reads; alsa-lib's timestamped rawmidi read), so an app can measure an
+incoming clock without the loop's wake-up in it. For output the runtime
+keeps no schedule of its own: an app that wants a message at a given time
+holds it until then and asks `wake_at()` for that time; the MIDI loop
+sleeps in `ppoll` on the inputs with that deadline, which the PREEMPT_RT
+kernel's high-resolution timers keep to well under a millisecond. To line
+MIDI up with the sound, time it on the audio clock: a block rendered now is
+heard `audio_frames * audio_queued_periods` frames later
+(`drivers/audio.h`). Melodee does this (`src/melodee/engine/midi_out.h`).
+Messages are built with `juce::MidiMessage` (`juce_audio_basics` is part of
+the build). The ALSA sequencer could schedule in the kernel instead, but on
+this kernel its queues tick on the 1 ms system timer or the PCM's 2.9 ms
+period (no `snd-hrtimer`), and `snd-seq-midi` would contend for the raw
+ports the runtime holds.
 
 ## Examples
 

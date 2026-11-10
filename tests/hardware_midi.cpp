@@ -42,6 +42,8 @@ extern "C" int __wrap_snd_rawmidi_open(snd_rawmidi_t** input, snd_rawmidi_t** ou
 }
 extern "C" int __wrap_snd_rawmidi_close(snd_rawmidi_t* port) { delete reinterpret_cast<Handle*>(port); --handles; return 0; }
 extern "C" int __wrap_snd_rawmidi_drop(snd_rawmidi_t*) { return 0; }
+// No kernel framing on the fake ports: reads keep their userspace receipt time.
+extern "C" int __wrap_snd_rawmidi_params_current(snd_rawmidi_t*, snd_rawmidi_params_t*) { return -ENOSYS; }
 extern "C" ssize_t __wrap_snd_rawmidi_read(snd_rawmidi_t* port, void* bytes, size_t size) {
     auto& handle = *reinterpret_cast<Handle*>(port);
     if (handle.card != 1) return -EAGAIN;

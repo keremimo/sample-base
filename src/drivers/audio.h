@@ -7,6 +7,9 @@
 #include <string>
 
 constexpr unsigned audio_rate = 44100, audio_frames = 128, audio_channels = 2;
+// Playback starts with this many periods queued and keeps about that many:
+// a block rendered now is heard this many frames later.
+constexpr unsigned audio_queued_periods = 3;
 using AudioBlock = std::array<int32_t, audio_frames * audio_channels>;
 struct AudioStats {
     std::atomic<uint64_t> frames {0}, capture_frames {0}, sounding_blocks {0};

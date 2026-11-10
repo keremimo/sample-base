@@ -4,6 +4,7 @@
 #include "runtime/util.h"
 #include "surface/controls.h"
 #include "surface/pads.h"
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -74,6 +75,7 @@ void Controller::run_midi(Session& session) {
         };
         auto send_surface = [&](const MidiPacket& packet) { return midi.send_surface(packet); };
         request_positions();
+        auto lights_due = Clock::now(); // the app's lights, every 5 ms
         while (session.running.load()) {
             midi.read([&](const MidiPortInfo& port, const MidiPacket& packet) {
                 midi_packet(session, port, packet, Clock::now() < syncing_until);
@@ -98,10 +100,20 @@ void Controller::run_midi(Session& session) {
             MidiSendRequest request;
             for (unsigned n = 0; n < 32 && midi_output.pop(request); ++n)
                 if (!midi.send(request.address.data(), request.packet)) ++session.midi_send_errors;
-            app.lights(lights, now);
-            lights.update(send_surface, 48);
+            // The app's timed output: it asks to be woken for its next message.
+            output.refresh();
+            output.wake = Clock::time_point::max();
+            app.midi_output(output, now);
+            if (now >= lights_due) {
+                app.lights(lights, now);
+                lights.update(send_surface, 48);
+                lights_due = now + std::chrono::milliseconds(5);
+            }
             midi.flush();
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            // Sleep until input arrives, the lights are due, the app's next
+            // message, the audition's release or the next port scan.
+            auto until = std::min({lights_due, output.wake, release, scan});
+            midi.wait(std::chrono::duration_cast<std::chrono::nanoseconds>(until - Clock::now()).count());
         }
         // Leave the surface dark for the next app rather than frozen mid-frame.
         lights.release();
@@ -110,6 +122,18 @@ void Controller::run_midi(Session& session) {
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n'; session.failed.store(true); session.running.store(false);
     }
+}
+
+void Controller::Output::refresh() {
+    if (midi.generation() == seen) return;
+    seen = midi.generation();
+    external.clear();
+    for (const auto& port : midi.open_list()) if (!port.surface) external.push_back(port);
+}
+
+bool Controller::Output::send(const std::string& address, const MidiPacket& packet) {
+    for (const auto& port : external) if (port.address == address) return midi.send(address, packet);
+    return false; // never the surface, never a port that is gone
 }
 
 // MIDI thread. Surface packets go through surface_event(); external MIDI

@@ -32,6 +32,9 @@ public:
     HardwareMidi& operator=(const HardwareMidi&) = delete;
     bool rescan(); // true if an open input disappeared; caller must panic
     void read(const Receive& receive);
+    // Sleeps until an open input has bytes or `timeout_ns` passes, so input
+    // is read as it arrives rather than on the next fixed tick.
+    void wait(long long timeout_ns);
     bool send(const std::string& address, const MidiPacket& packet);
     bool send_surface(const MidiPacket& packet); // false without a surface output
     void flush();
@@ -39,7 +42,14 @@ public:
     std::string json() const;
     MidiPorts open_ports() const;
     std::vector<std::string> outputs() const;
+    // The ports open now, rebuilt only when rescan() changes them, for a
+    // caller that looks every pass without allocating.
+    const std::vector<MidiPortInfo>& open_list() const { return open; }
+    unsigned generation() const { return changes; } // counts changes to open_list()
 private:
+    unsigned changes = 0;
+    void list_open();
+    std::vector<MidiPortInfo> open;
     struct Port;
     std::vector<std::unique_ptr<Port>> ports;
     unsigned send_drops = 0, input_errors = 0;
