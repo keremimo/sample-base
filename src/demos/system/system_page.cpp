@@ -102,8 +102,7 @@ void draw_health(const Painter& p, const SystemView& view) {
     p.tile(8, y, 148, 42, "POWER", supply);
     p.text(volts_text(r.supply_microvolts), 16, y + 13, 70, 18, 15, r.supply_microvolts >= 0 ? text : muted);
     p.text(std::string("Key ") + key_text(r), 86, y + 15, 62, 14, 10, r.key_down ? amber : muted, juce::Justification::centredRight);
-    p.label(r.key_available ? "Power key pressed " + juce::String(r.key_presses) + (r.key_presses == 1 ? " time" : " times")
-                            : juce::String("No power key"), 16, y + 28, 132, 12, 9, muted);
+    p.label(r.key_available ? "Key presses: " + juce::String(r.key_presses) : juce::String("No power key"), 16, y + 28, 132, 12, 13, muted);
 
     p.tile(164, y, 148, 42, "BACKLIGHT");
     bool lit = r.backlight >= 0 && r.backlight_maximum > 0;

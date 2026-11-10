@@ -29,9 +29,9 @@ void draw_sequencer_page(juce::Graphics& g, const Ui& ui, const DemoView& state)
         bool silenced = (view.muted >> track) & 1, hit = (view.hits >> track) & 1;
         if (track == selected) { g.setColour(panel); g.fillRoundedRectangle(8, float(y - 1), 304, float(cell + 2), 3); }
         g.setColour(hit ? lane_colour(track) : lane_colour(track, 0.25f)); g.fillRect(12, y, 3, cell);
-        label(juce::String::charToString(juce::juce_wchar(seq::track_letter(track))) + " " + seq::drum_labels[track], 19, y - 1, 48, cell + 2,
-              10, silenced ? muted : text);
-        if (silenced) label("M", 58, y - 1, 10, cell + 2, 10, red);
+        // The lane's letter; the selected lane's name is on the TRACK key.
+        label(juce::String::charToString(juce::juce_wchar(seq::track_letter(track))), 19, y - 1, 20, cell + 2, 13, silenced ? muted : text);
+        if (silenced) label("M", 44, y - 1, 20, cell + 2, 13, red);
         for (unsigned step = 0; step < seq::steps; ++step) {
             uint8_t velocity = view.steps[track][step];
             auto colour = velocity ? lane_colour(track, 0.35f + 0.65f * velocity / 127) : step % 4 ? key : rule;

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "demos/ui.h"
+#include <algorithm>
 #include <cmath>
 
 void Ui::label(juce::Graphics& g, const juce::String& value, int x, int y, int w, int h, float size, juce::Colour colour,
                juce::Justification justification) const {
+    // Readable at arm's length on the 320 x 240 panel: no line under 13 px
+    // (about 11 px type, the same floor as Melodee's).
+    constexpr float smallest = 13;
     g.setColour(colour);
-    g.setFont(juce::Font(juce::FontOptions(typeface).withHeight(size)));
+    g.setFont(juce::Font(juce::FontOptions(typeface).withHeight(std::max(size, smallest))));
     g.drawText(value, x, y, w, h, justification, false);
 }
 

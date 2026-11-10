@@ -41,5 +41,5 @@ void draw_prompt(juce::Graphics& g, const juce::Typeface::Ptr& typeface, const s
     g.setColour(panel); g.fillRoundedRectangle(12, 136, 296, 52, 5);
     label(lines[3], 22, 136, 280, 52, 16, mint);
     g.setColour(rule); g.fillRect(12, 205, 296, 1);
-    label(lines[4], 12, 210, 296, 20, 12, muted);
+    label(lines[4], 12, 210, 296, 20, 13, muted);
 }
