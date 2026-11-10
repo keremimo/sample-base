@@ -176,9 +176,9 @@ undocumented `CV_SEL` or `CVCLK_RST` mux/reset lines. Event timestamps are
 kernel monotonic nanoseconds. The service loop is not a musical clock
 scheduler, and output timing/electrical routing requires hardware validation.
 An app may drive the output from the MIDI thread (`MidiOutput::sync`, timed by
-its own schedule); `ClockIo` takes a short lock for that. Melodee's CV clock
-was driven at up to 192 pulses a quarter this way; the jack's voltage has not
-been measured.
+its own schedule); `ClockIo` takes a short lock for that. Melodee (melodee-sample)
+drove its CV clock at up to 192 pulses a quarter this way; the jack's voltage
+has not been measured.
 
 `--audio-output NAME --audio-input NAME|off` selects another ALSA PCM. This
 base requires stereo S32 and 128-frame periods, at 44.1, 48 or 96 kHz with

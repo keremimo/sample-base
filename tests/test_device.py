@@ -72,7 +72,7 @@ class SwitchingTests(unittest.TestCase):
             calls.append(command)
             return subprocess.CompletedProcess([], 0, "OK frames=0", "")
         with patch.object(device, "stage", return_value="/run/sample-base-release-abc"), patch.object(device, "run", side_effect=run):
-            device.start(app="melodee")
+            device.start(app="starter")
         stop = next(command for command in calls if "systemctl stop sample-base.service" in command)
         self.assertIn("ExecStopPost=", stop)
         self.assertLess(stop.index("swap.conf"), stop.index("systemctl stop sample-base.service"))

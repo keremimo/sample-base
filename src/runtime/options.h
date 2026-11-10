@@ -18,7 +18,7 @@ struct Options {
     Mode mode = Mode::Run;
 
     // Run
-    std::string app = "demos"; // Which app main.cpp starts.
+    std::string app = "demos"; // Which app main.cpp starts; parse_options() sets the default.
     std::string audio_output = "hw:I2S,0", audio_input = "hw:I2S,0", usb_input = "auto";
     std::string usb_output = "auto"; // What the computer records over USB-C; "off" opens nothing.
     bool usb_stems = true; // Widen the USB-C gadget to the main mix plus 16 stems (drivers/usb_gadget.h)
@@ -30,4 +30,6 @@ struct Options {
 };
 
 // Throws std::runtime_error for unknown options and invalid values.
-Options parse_options(int argc, char** argv);
+// default_app is what --app falls back to: an app kept in its own repository
+// passes its own name, so its binary needs no --app.
+Options parse_options(int argc, char** argv, const std::string& default_app = "demos");

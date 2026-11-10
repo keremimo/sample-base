@@ -32,6 +32,34 @@ python3 device.py start --app starter                                   # on the
 
 The Makefile picks up every `.cpp` under `src/` by itself.
 
+## An app in its own repository
+
+An app can keep its own repository and take sample-base as a git submodule
+(Melodee does, in `melodee-sample`). The app repository holds `src/main.cpp`
+and `src/<app>/`, and builds the base layers with them:
+
+```make
+# Makefile
+BASE_SRC := base/src
+TARGET := build/myapp
+APP_SOURCES := $(wildcard src/*.cpp src/*/*.cpp src/*/*/*.cpp)
+include base/base.mk
+```
+
+- `src/main.cpp` is a copy of this one that knows only its app and calls
+  `parse_options(argc, argv, "myapp")`, so the binary starts it without
+  `--app`. It must answer `--self-test FILE.wav`: `device.py` and the SD
+  boot run it before stopping the stock app.
+- Dependencies: load `base/tools/dependencies.py` and call
+  `prepare(<app root>)`; JUCE and the app's own `src/<app>/dependencies.py`
+  files land in the app's `build/deps/`.
+- Building: `base/tools/Dockerfile` is the build image; mount the app
+  repository at `/work` and run `make` there.
+- Device: load `base/device.py`, set its `BINARY` to the app's build and
+  call `cli(default_app="myapp")`. The install scripts stay in the base.
+- Layers: the app includes `surface/`, `dsp/`, `drivers/` and `runtime/`
+  headers by the same names, and nothing from `demos/` or `starter/`.
+
 ## The layers
 
 Each include names its folder (`"drivers/audio.h"`), and a layer only
@@ -121,7 +149,7 @@ itself. The system demo (`src/demos/system/`) reads all of these.
   it back (HARDWARE.md, "SD card access"); `card-share` does the same from
   the remote. On exit, after a crash or before the stock app starts, a lent
   card comes back. The app shows its own page for it and keeps away from
-  the card meanwhile (Melodee: `src/melodee/shell/card_access.*`).
+  the card meanwhile (Melodee does: `src/melodee/shell/card_access.*` in melodee-sample).
 - **Jacks:** headphone and line-out detection followed through ALSA control
   events, in `session()` for every thread, `jack()` on each change and the
   `jacks` command. Nothing is rerouted unless the app does it.
@@ -138,7 +166,7 @@ sleeps in `ppoll` on the inputs with that deadline, which the PREEMPT_RT
 kernel's high-resolution timers keep to well under a millisecond. To line
 MIDI up with the sound, time it on the audio clock: a block rendered now is
 heard `AudioFormat::latency_frames()` frames later (`drivers/audio.h`,
-given to `audio_opened()`). Melodee does this (`src/melodee/engine/midi_out.h`).
+given to `audio_opened()`). Melodee does this (`src/melodee/engine/midi_out.h` in melodee-sample).
 Messages are built with `juce::MidiMessage` (`juce_audio_basics` is part of
 the build). The ALSA sequencer could schedule in the kernel instead, but on
 this kernel its queues tick on the 1 ms system timer or the PCM's 2.9 ms

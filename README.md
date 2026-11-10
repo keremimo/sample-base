@@ -8,9 +8,9 @@ The base is built for your own app to plug into: implement one interface,
 `App`, and the runtime handles the hardware, threads, remote control and the
 safe return to the stock app. See [docs/APPS.md](docs/APPS.md); the smallest
 working app is in [src/starter/](src/starter/). The bundled proofs of concept
-below live in [src/demos/](src/demos/). Melodee, a sixteen-track groovebox
-with its own engines and screens, is in [src/melodee/](src/melodee/); start
-it with `--app melodee` ([docs/MELODEE.md](docs/MELODEE.md)).
+below live in [src/demos/](src/demos/). An app can also live in its own
+repository with this one as a submodule, as Melodee, a sixteen-track
+groovebox, does in `melodee-sample`.
 
 The proof of concept has 16 velocity-sensitive pads mapped to C major from
 C4 to D6, a 16-voice sine/triangle synth, a pad display and an output meter.
@@ -153,7 +153,7 @@ startup configuration. No firmware, stock libraries or SD startup files change.
 To start an app from the SD card at every boot:
 
 ```sh
-python3 device.py install-sd --app melodee
+python3 device.py install-sd --app demos
 python3 device.py uninstall-sd
 ```
 

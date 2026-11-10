@@ -10,6 +10,9 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent
+# The built app. An app in its own repository loads this module and points
+# BINARY at its own build (docs/APPS.md); it is staged as "sample-base".
+BINARY = ROOT / "build/sample-base"
 STOCK_SHA256 = "b6584cba76e416e432ad202509099d34373dc2c3d6a8fb625f5678bf0193b508"
 UNIT_PATH = "/run/systemd/system/sample-base.service"
 SWAP_DROPIN_DIR = UNIT_PATH + ".d"
@@ -104,7 +107,7 @@ class Device:
 
     def stage(self):
         self.check_identity()
-        files = {"sample-base": ROOT / "build/sample-base",
+        files = {"sample-base": BINARY,
                  "restore-stock.sh": ROOT / "install/restore-stock.sh"}
         for path in files.values():
             if not path.is_file():
@@ -182,7 +185,7 @@ class Device:
         if not valid_app_name(app):
             raise ValueError("App names use letters, digits, - and _")
         self.check_identity()
-        sources = {"sample-base": ROOT / "build/sample-base", "restore-stock.sh": ROOT / "install/restore-stock.sh",
+        sources = {"sample-base": BINARY, "restore-stock.sh": ROOT / "install/restore-stock.sh",
                    "sd-boot.sh": ROOT / "install/sd-boot.sh", "sd-worker.sh": ROOT / "install/sd-worker.sh"}
         for path in sources.values():
             if not path.is_file():
@@ -248,7 +251,7 @@ class Device:
         print(output)
 
 
-def main():
+def main(default_app="demos"):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="192.168.155.1")
     parser.add_argument("--port", type=int, default=2222)
@@ -256,10 +259,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("start")
     start.add_argument("--seconds", type=int, default=0, help="automatically return to stock after N seconds")
-    start.add_argument("--app", default="demos", help="which app to run: demos (default) or starter")
+    start.add_argument("--app", default=default_app, help=f"which app to run (default: {default_app})")
     commands.add_parser("stock")
     install = commands.add_parser("install-sd", help="start an app from the SD card at every boot")
-    install.add_argument("--app", default="melodee")
+    install.add_argument("--app", default=default_app)
     install.add_argument("--remove-plugins", action="store_true", help="stop MPC-Plugins starting from the card")
     commands.add_parser("uninstall-sd")
     commands.add_parser("status")
@@ -283,8 +286,12 @@ def main():
         device.screenshot(args.output)
 
 
-if __name__ == "__main__":
+def cli(default_app="demos"):
     try:
-        main()
+        main(default_app)
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
         raise SystemExit(str(error))
+
+
+if __name__ == "__main__":
+    cli()

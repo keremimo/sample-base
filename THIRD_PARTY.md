@@ -27,18 +27,7 @@ No sibling checkout is a build dependency.
 
 ## Fonts and platform
 
-Melodee (`src/melodee/`) embeds Rubik, Copyright 2015 The Rubik Project
-Authors, under the SIL Open Font License 1.1, from google/fonts commit
-`5bb28733cec313b63fbd415b574b5ae35c8aa8b8` (`ofl/rubik/Rubik[wght].ttf`).
-`src/melodee/dependencies.py` fetches it and its `OFL.txt` into ignored
-`build/deps/rubik/` and checks both against pinned SHA-256 digests; the font
-is not tracked here. Its licence text travels with that download.
-
-Melodee's sound engines, sequencer and effects are written for this
-project. They follow what Melodee's engines do, but no Melodee firmware or
-DSP source is compiled into the app, and its factory sounds are new.
-
-The other apps load Liberation Sans from the existing target installation. The
+The apps load Liberation Sans from the existing target installation. The
 build environment installs the distribution's Liberation font package for
 previews; no fonts are copied from the MPC or included in this repository.
 ALSA, DRM, libsystemd (sd-bus), FreeType and Fontconfig are linked to the

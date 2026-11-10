@@ -16,7 +16,6 @@ ALLOWED = {
     "runtime": BASE | {"drivers", "runtime"},
     "demos": BASE | {"drivers", "runtime", "demos"},
     "starter": BASE | {"drivers", "runtime", "starter"},
-    "melodee": BASE | {"drivers", "runtime", "melodee"},
 }
 INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
 

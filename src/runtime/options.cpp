@@ -2,8 +2,9 @@
 #include "runtime/options.h"
 #include "runtime/util.h"
 
-Options parse_options(int argc, char** argv) {
+Options parse_options(int argc, char** argv, const std::string& default_app) {
     Options options;
+    options.app = default_app;
     using Mode = Options::Mode;
     for (int i = 1; i < argc; ++i) {
         std::string option = argv[i];
