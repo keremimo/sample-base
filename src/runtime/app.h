@@ -75,7 +75,9 @@ public:
     // so asking for the same colour again costs nothing.
     virtual void lights(SurfaceLights&, Clock::time_point) {}
 
-    // Screen thread, every 75 ms: draw the whole 320 x 240 screen. Not called
+    // Screen thread, once per frame: draw the whole 320 x 240 screen. Frames
+    // come as fast as the panel takes them (it has no vsync), at most 60 a
+    // second; animate from the clock, not by counting frames. Not called
     // while a remote prompt is shown or with --headless.
     virtual void draw(juce::Graphics&) = 0;
 

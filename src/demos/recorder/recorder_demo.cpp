@@ -97,7 +97,7 @@ void RecorderAudio::process(DemoState& state, const AudioBlock& input, std::arra
     std::array<float, block_frames * 2> recorded {};
     if (source == InputSource::Usb) state.usb.pull(recorded.data(), block_frames);
     else if (source != InputSource::Off) for (unsigned i = 0; i < recorded.size(); ++i) recorded[i] = float(input[i] / full_scale);
-    // About 20 dB per 300 ms of fall, so the 75 ms screen refresh sees peaks.
+    // About 20 dB per 300 ms of fall, so every screen frame sees peaks.
     meter_left *= 0.978f; meter_right *= 0.978f;
     for (unsigned n = 0; n < block_frames; ++n) {
         meter_left = std::max(meter_left, std::abs(recorded[2 * n]));

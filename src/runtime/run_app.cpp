@@ -8,6 +8,7 @@
 #include "runtime/reports.h"
 #include "runtime/screen.h"
 #include "runtime/session.h"
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <iostream>
@@ -22,6 +23,17 @@ void signal_handler(int) { interrupted = 1; }
 // AudioDevice's callback: the app renders each block, and the computer
 // records what it rendered when it is recording over USB-C.
 struct AudioRoute { App& app; UsbAudioOutput& usb; };
+// The screen's counters for the status line.
+void record_screen(ScreenStats& screen, const Display::Stats& stats, std::chrono::steady_clock::duration draw) {
+    screen.presented.store(stats.presented, std::memory_order_relaxed);
+    screen.pushed.store(stats.pushed, std::memory_order_relaxed);
+    screen.pixels.store(stats.pixels, std::memory_order_relaxed);
+    screen.last_push_us.store(stats.last_push_us, std::memory_order_relaxed);
+    screen.max_push_us.store(stats.max_push_us, std::memory_order_relaxed);
+    screen.full_push_us.store(stats.full_push_us, std::memory_order_relaxed);
+    screen.draw_us.store(uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(draw).count()), std::memory_order_relaxed);
+}
+
 void render(void* context, const AudioBlock& input, AudioBlock& output) {
     auto& route = *static_cast<AudioRoute*>(context);
     route.app.render(input, output);
@@ -49,9 +61,20 @@ int run_app(App& app, const Options& options) {
         audio_thread = std::thread([&] { audio.run(session.running, session.failed, session.audio, render, &route); });
         control_thread = std::thread([&] { controller.run(session, server); });
         std::cout << "READY sample-base JUCE " << JUCE_MAJOR_VERSION << '.' << JUCE_MINOR_VERSION << '.' << JUCE_BUILDNUMBER << std::endl;
-        // This thread draws the screen: the remote prompt while one is shown, otherwise the app.
+        // This thread draws the screen: the remote prompt while one is shown,
+        // otherwise the app. present() waits while the panel still receives
+        // the last frame, so the panel's SPI push sets the rate, and frames
+        // never come closer than busy_interval (about the panel's own scan).
+        // Drawing costs CPU even when nothing moves, so once the screen has
+        // stood still for idle_after the loop draws every idle_interval, and
+        // any control or remote input wakes it at once.
+        using ScreenClock = std::chrono::steady_clock;
+        constexpr std::chrono::microseconds busy_interval {16667}, idle_interval {100000}, idle_after {500000}, input_poll {4000};
+        auto inputs = [&] { return session.hardware_events.load() + session.external_events.load() + session.synthetic_events.load(); };
         juce::Image image(juce::Image::ARGB, screen_width, screen_height, true);
-        while (session.running.load() && !interrupted && std::chrono::steady_clock::now() < deadline) {
+        auto next = ScreenClock::now(), last_change = next;
+        while (session.running.load() && !interrupted && ScreenClock::now() < deadline) {
+            auto start = ScreenClock::now();
             if (display) {
                 {
                     juce::Graphics g(image);
@@ -60,10 +83,18 @@ int run_app(App& app, const Options& options) {
                     if (!prompt.empty()) draw_prompt(g, prompt_font, prompt);
                     else app.draw(g);
                 }
-                display->present(image);
+                auto drawn = ScreenClock::now();
+                if (display->present(image)) last_change = drawn;
+                record_screen(session.screen, display->stats(), drawn - start);
                 if (session.screenshot.exchange(false)) save_png(image, options.runtime + "/screen.png");
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(75));
+            bool idle = !display || start - last_change > idle_after;
+            next = std::max(next + (idle ? idle_interval : busy_interval), ScreenClock::now() - busy_interval);
+            if (!idle) { std::this_thread::sleep_until(next); continue; }
+            auto seen = inputs();
+            while (ScreenClock::now() < next && inputs() == seen && session.running.load() && !interrupted && !session.screenshot.load())
+                std::this_thread::sleep_for(input_poll);
+            if (inputs() != seen) { last_change = ScreenClock::now(); next = last_change; }
         }
     } catch (...) {
         session.running.store(false);

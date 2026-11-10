@@ -5,15 +5,19 @@
 
 std::string status_line(const Session& session, const App& app, const UsbAudioOutput& usb_output) {
     const auto& audio = session.audio;
-    char reply[768];
+    char reply[1024];
     snprintf(reply, sizeof(reply), "OK frames=%llu sounding_blocks=%llu hardware_events=%u external_events=%u synthetic_events=%u "
              "held=%04x last_pad=%d velocity=%d last_midi=%06x peak=%.6f input_peak=%.6f capture_frames=%llu capture_active=%u "
-             "xruns=%u capture_xruns=%u clocks=%u headphones=%d line_out=%d push_exit=%u usb_output=%s",
+             "xruns=%u capture_xruns=%u clocks=%u screen_presented=%llu screen_pushed=%llu screen_pixels=%llu screen_push_us=%u "
+             "screen_max_push_us=%u screen_full_push_us=%u screen_draw_us=%u headphones=%d line_out=%d push_exit=%u usb_output=%s",
              static_cast<unsigned long long>(audio.frames.load()), static_cast<unsigned long long>(audio.sounding_blocks.load()),
              session.hardware_events.load(), session.external_events.load(), session.synthetic_events.load(), session.held.load(),
              session.last_pad.load() + 1, session.velocity.load(), session.last_midi.load(), double(audio.peak.load()),
              double(audio.input_peak.load()), static_cast<unsigned long long>(audio.capture_frames.load()),
              unsigned(audio.capture_active.load()), audio.xruns.load(), audio.capture_xruns.load(), session.clocks.load(),
+             static_cast<unsigned long long>(session.screen.presented.load()), static_cast<unsigned long long>(session.screen.pushed.load()),
+             static_cast<unsigned long long>(session.screen.pixels.load()), session.screen.last_push_us.load(),
+             session.screen.max_push_us.load(), session.screen.full_push_us.load(), session.screen.draw_us.load(),
              session.plugged(Jack::Headphones), session.plugged(Jack::LineOut), unsigned(session.push_exit.load()), usb_stream_state_names[size_t(usb_output.state())]);
     auto fields = app.status();
     return fields.empty() ? std::string(reply) : std::string(reply) + ' ' + fields;

@@ -10,7 +10,7 @@ DemoView ScreenFeed::frame(DemoState& state, const Session& session) {
     view.last_input = describe_last_input(session.last_input.load());
     view.light_position = state.light_position.load();
     view.recorder = recorder.frame(state, session.audio.capture_active.load(), view.page == Page::Recorder);
-    pad_trace.advance(state.pads, view.velocity);
+    pad_trace.advance(state.pads, view.velocity, std::chrono::steady_clock::now());
     if (view.page == Page::Pads) view.pads = pad_trace.view(state.pads);
     view.seq = seq.frame(state, view.page == Page::Seq);
     view.system = system_view(state, session, view.page == Page::System);
