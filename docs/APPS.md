@@ -75,11 +75,17 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 - the last control touched;
 - audio peaks and recoveries;
 - whether headphones and line out are plugged in, `session().plugged(Jack::Headphones)`;
-- whether a remote prompt owns the screen.
+- whether a remote prompt owns the screen;
+- SD card access: whether the card is home, lending, lent or coming back,
+  whether a computer is connected and has ejected it, and a count that
+  moves each time it comes back (`card_share`, `card_connected`,
+  `card_ejected`, `card_returns`). While it is not home the app must not
+  touch the card.
 
 `Hardware` gives `service()`, `jack()` and `command()` the mixer (routes),
 platform (backlight, power, temperatures, CPU load, memory and storage
-space), storage service and sync jacks, plus read-only views of the power
+space), storage service, SD card access (`card`: lend the card to a
+computer over USB-C and take it back) and sync jacks, plus read-only views of the power
 key, jack detection, the USB-C audio output and the MIDI ports as last
 scanned.
 Anything else in `src/drivers/`, such as `UsbAudioInput`, an app can own
@@ -94,7 +100,7 @@ itself. The system demo (`src/demos/system/`) reads all of these.
   `finished()` once chosen. The other ways back stay as they are.
 - **Remote commands:** `status`, `screenshot`, `audition` (pad 1 pressed for
   300 ms), `prompt`, `led`, `surface`, `surface-log`, `midi`, `midi-send`,
-  the mixer, brightness, clock, power, storage and `usb-output` commands
+  the mixer, brightness, clock, power, storage, `card-share` and `usb-output` commands
   all work for every app (see [HARDWARE.md](HARDWARE.md)).
 - **USB-C audio out:** whenever a computer records from the MPC over USB-C,
   it gets exactly what `render()` wrote, after the app's own volume, on
@@ -108,6 +114,12 @@ itself. The system demo (`src/demos/system/`) reads all of these.
   button presses alone while `session().prompting` is set.
 - **MIDI ports:** found by name, reopened after USB hotplug, and the surface
   positions requested at startup.
+- **SD card access:** `Hardware::card` lends the microSD card to a
+  computer as a USB drive beside USB audio, MIDI and networking, and takes
+  it back (HARDWARE.md, "SD card access"); `card-share` does the same from
+  the remote. On exit, after a crash or before the stock app starts, a lent
+  card comes back. The app shows its own page for it and keeps away from
+  the card meanwhile (Melodee: `src/melodee/shell/card_access.*`).
 - **Jacks:** headphone and line-out detection followed through ALSA control
   events, in `session()` for every thread, `jack()` on each change and the
   `jacks` command. Nothing is rerouted unless the app does it.

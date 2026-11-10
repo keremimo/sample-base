@@ -72,6 +72,7 @@ std::string Controller::command(Session& session, const std::string& text) {
     if (action == "jacks" && argument.empty()) return "OK " + jacks.json();
     if (action == "usb-output") return usb_output_command(argument);
     if (action == "storage" && argument.empty()) return "OK {\"generation\":" + std::to_string(services.storage_generation()) + ",\"state\":" + services.storage_json() + '}';
+    if (action == "card-share") return card_share_command(session, argument);
     if (action == "storage-mount" || action == "storage-unmount")
         return services.mount(argument, action == "storage-mount") ? "OK storage request completed" : "ERR storage service request failed";
 
@@ -80,7 +81,7 @@ std::string Controller::command(Session& session, const std::string& text) {
     if (!reply.empty()) return reply;
     auto names = app.command_names();
     return "ERR use status, hardware, surface, surface-log, surface-sync, push-exit, prompt, power, jacks, led, midi, midi-send, mixer, mixer-set, "
-           "brightness, storage, storage-mount, storage-unmount, usb-output, audition, screenshot, clock, clock-in, clock-out or stock" +
+           "brightness, storage, storage-mount, storage-unmount, card-share, usb-output, audition, screenshot, clock, clock-in, clock-out or stock" +
            (names.empty() ? std::string() : "; app: " + names);
 }
 
@@ -152,4 +153,19 @@ std::string Controller::led(const std::string& text) {
         if (key(surface_buttons[n].name) == key(name) && light != std::end(levels))
             return done(lights.button(SurfaceButton(n), ButtonLight(light - std::begin(levels))));
     return done(false);
+}
+
+// card-share [on|off|force]: the SD card lent to a computer over USB-C and
+// taken back (drivers/card_share.h). The app hears of it through Session.
+std::string Controller::card_share_command(Session& session, const std::string& argument) {
+    if (argument == "on") {
+        if (!card.lend()) return "ERR " + card.status().message;
+    } else if (argument == "off" || argument == "force") {
+        if (card.status().state != CardShareState::Lent) return "ERR the card is not lent";
+        card.take_back(argument == "force");
+    } else if (!argument.empty()) return "ERR use card-share [on|off|force]";
+    if (!argument.empty()) card.poll();
+    follow_card(session);
+    if (card.status().locked && argument == "off") return "ERR " + card.status().message;
+    return "OK " + card.json();
 }

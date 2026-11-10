@@ -83,6 +83,14 @@ class RuntimeTests(unittest.TestCase):
             compile_fixture(binary, "tests/usb_gadget.cpp", "src/drivers/usb_gadget.cpp")
             subprocess.run([str(binary), temp], check=True, timeout=10)
 
+    def test_card_share_found_refused_and_recovered(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "card-share"
+            compile_fixture(binary, "tests/card_share.cpp", "src/drivers/card_share.cpp", "src/drivers/usb_gadget.cpp",
+                            "src/drivers/platform.cpp", "src/drivers/system_services.cpp", extra=("-lsystemd",))
+            subprocess.run([str(binary), temp], check=True, timeout=20,
+                           env={**os.environ, "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/nonexistent-sample-base-bus"})
+
     @unittest.skipUnless((ROOT / "build/sample-base").is_file(), "build application first")
     def test_headless_control_commands_and_clean_shutdown(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -331,7 +339,7 @@ class RuntimeTests(unittest.TestCase):
                     return client.recv(32768).decode()
                 status = command("status")
                 # The runtime's fields only: the starter adds none.
-                self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1 usb_output=stopped"), status)
+                self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1 usb_output=stopped card_share=home"), status)
                 self.assertNotIn("page=", status)
                 self.assertEqual(command("audition"), "OK audition pad 1")
                 for _ in range(300):

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include "drivers/card_share.h"
 #include "drivers/clock_io.h"
 #include "drivers/hardware_midi.h"
 #include "drivers/jacks.h"
@@ -46,6 +47,7 @@ private:
     void surface_event(Session& session, MidiEvent midi, bool syncing);
     void record_surface_packets();
     void poll_platform(Session& session);
+    void follow_card(Session& session);
 
     // commands.cpp: the control protocol, run on the service thread.
     std::string command(Session& session, const std::string& text);
@@ -53,6 +55,7 @@ private:
     std::string midi_send_command(const std::string& argument);
     std::string mixer_set_command(const std::string& argument);
     std::string usb_output_command(const std::string& argument);
+    std::string card_share_command(Session& session, const std::string& argument);
 
     // App::midi_output()'s view of the MIDI thread's ports and the sync line.
     class Output : public MidiOutput {
@@ -81,6 +84,7 @@ private:
     JackDetect jacks;
     Platform platform;
     SystemServices services;
+    CardShare card {services}; // Takes back a card an earlier run left lent
     ClockIo clock;
     PowerButton power;
     SurfaceLights lights;
@@ -97,7 +101,7 @@ private:
     MidiQueue<4, MidiCatalog> catalog_updates;
 
     // What App::service() and App::command() may use.
-    Hardware hardware {mixer, platform, services, clock, power, jacks, usb_output, catalog.ports};
+    Hardware hardware {mixer, platform, services, clock, card, power, jacks, usb_output, catalog.ports};
 
     // Service thread asks, MIDI thread acts.
     MidiQueue<32, MidiSendRequest> midi_output;

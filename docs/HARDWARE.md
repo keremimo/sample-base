@@ -55,6 +55,7 @@ The kernel sources remain under their own upstream licences.
 | SD/eMMC/removable storage | Kernel block devices and the existing `edisksd` service | Mounted paths, read-only status and free space; D-Bus volume metadata and explicit mount/unmount requests by service object path |
 | Sync input/output | GPIO lines named `CV_CLK_IN` / `CV_CLK_OUT` | Opt-in `ClockIo`: timestamped rising/falling input edges, loss counts and explicit output levels; kernel-owned lines are never taken over |
 | USB device connection | Existing USB device controller and gadget configuration | Read-only UDC connection state; the app preserves the existing USB networking/gadget setup |
+| SD card access | The gadget's configfs `mass_storage` function (`CONFIG_USB_CONFIGFS_MASS_STORAGE`) and `edisksd` | `CardShare` lends the removable card to a computer as a USB drive beside audio, MIDI and networking, and takes it back (see "SD card access") |
 | Thermal/network status | Kernel thermal zones and network interfaces | Read-only temperatures and interface state; no radio, network or thermal policy changes |
 | CPU and memory | `/proc/stat` and `/proc/meminfo` | `Platform` reads busy and total CPU time per core and total and available memory; read-only |
 | Session recovery | Existing stock systemd service | RAM-only application and recovery script; wheel Push, remote stop, failure and crash restore the existing service; shutdown does not restart it |
@@ -163,6 +164,11 @@ can refresh their view. No card is mounted or unmounted automatically. Timeouts 
 out mount request may still finish in the daemon, so refresh storage state
 before retrying it.
 
+`card-share` reports SD card access as JSON; `card-share on` lends the card
+to the computer, `card-share off` takes it back once the computer has
+ejected it, and `card-share force` takes it back even if the computer still
+holds it (see "SD card access").
+
 `clock-in on|off` opts into GPIO input edge reporting. `clock-out 0|1` opts
 into ownership of the dedicated output and sets its level; normal cleanup
 returns it low and releases the line. These commands do not change the
@@ -264,6 +270,45 @@ above it. That is fine for recording ideas and monitoring, not for
 mastering. From the buffer sizes, audio reaches the computer about 45 ms after the jacks. If the
 computer plays its input straight back to the MPC while an app monitors
 USB-C input, the audio loops; the demos never monitor USB-C input.
+
+## SD card access
+
+The stock app's Project > SD Card Access offers the microSD card to a
+computer as a USB drive. It does so by switching the whole gadget to
+`/usr/lib/az0x-usb-gadget/ac50-sd-access.scheme` (`az0x-usb-gadget switch
+sd-access`): one `mass_storage` function and a different product ID, so
+audio, MIDI and USB networking are gone until it switches back. The base
+does it beside them instead, so a computer keeps recording stems and SSH
+keeps working ([src/drivers/card_share.h](../src/drivers/card_share.h),
+[src/drivers/usb_gadget.h](../src/drivers/usb_gadget.h)). Apps call it on
+the service thread through `Hardware::card`; the remote through
+`card-share`.
+
+| Step | What happens |
+| --- | --- |
+| Find | The card is the first removable `flash_sd` file system edisksd reports (its `Removable`, `Media`, `SysPath` and `Mountpoints` properties); its disk is the parent in `SysPath` (`mmcblk1`). |
+| Unmount | `sync`, then edisksd's `Unmount` on each mounted file system of that disk. If one refuses (a file open, a program running from it) nothing is lent and the card is mounted again. The kernel's mount table is checked as well: the card is never offered while anything on it is mounted on the MPC. |
+| Offer | A `mass_storage.sd` function (one removable, read-write LUN, `lun.0/file` = `/dev/mmcblk1`) is made and linked into `c.1`, the gadget unbound and bound again (about a second without USB). `/run/sample-base-card-share` names the disk and the links' old order first, so a crash still takes the card back. |
+| Lent | `connected` follows the controller's state (`configured`), `ejected` the LUN's file going empty when the computer ejects the drive. |
+| Take back | `lun.0/file` emptied. While the computer has the drive mounted it locks the medium (PREVENT MEDIUM REMOVAL) and the kernel refuses with `EBUSY`: `card-share off` says to eject it on the computer first. `force` writes `forced_eject` instead. The function is unlinked and removed, the links go back in their old order, the gadget rebinds. |
+| Mount again | The block device is flushed and its partitions read again (the computer may have repartitioned or formatted it), then edisksd mounts each file system of the disk, for up to five seconds. `returns` counts each homecoming, so apps rescan. |
+
+**The controller's FIFOs decide the link order.** The RK3566's DWC3 hands
+IN endpoints out in link order, and its transmit FIFOs 1–5 hold 3104 bytes
+each but FIFO 6 only 336 (`GTXFIFOSIZ(6) = 0x07d6002a`, read in debugfs),
+less than one 512-byte high-speed bulk packet. Linked last, the drive's bulk
+IN landed there and never sent a block: macOS saw the interface and hung
+probing it. Linking the network function after the drive puts NCM's 16-byte
+notify endpoint on FIFO 6 instead; the audio and MIDI interfaces keep their
+numbers, NCM moves after the drive while it is lent and comes back after.
+Checked on a Mac: the card mounts, files written there are on the card
+afterwards, the computer's lock refuses a plain take-back, SSH, the 18
+channel audio device and the MIDI port stay up throughout.
+
+Leaving the app takes the card back at once, forced. A new start takes back
+a card an earlier run left lent, and `install/restore-stock.sh` does the
+same before the stock app starts. The stock app's own SD Card Access is not
+touched.
 
 ## Jack detection
 
@@ -683,8 +728,9 @@ Codec reset, speaker/mic power, mute delays, headphone detection and regulators
 belong to their kernel drivers and ALSA routing; `JackDetect` only reads
 what detection reports. The application does not
 write those GPIOs or codec registers directly. It does not rebuild the kernel
-or replace system services. Its one change to the USB gadget is the USB-C
-audio channel count for stems, which the recovery script undoes.
+or replace system services. Its changes to the USB gadget are the USB-C
+audio channel count for stems and, during SD card access, the mass-storage
+function; the recovery script undoes both.
 
 All new hardware-facing behavior still requires physical qualification.
 See [VALIDATION.md](VALIDATION.md) for the offline tests and remaining checks.

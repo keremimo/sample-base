@@ -135,6 +135,52 @@ class RecoveryScriptTests(unittest.TestCase):
                 self.assertEqual(os.readlink(config / name), str(configfs / "ac50/functions" / name))
             self.assertFalse(saved.exists())
 
+    def test_lent_card_taken_back_before_stock(self):
+        source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            systemctl = root / "systemctl"
+            systemctl.write_text('#!/bin/sh\nif [ "$1" = is-system-running ]; then echo running; exit 0; fi\n')
+            systemctl.chmod(0o755)
+            busctl = root / "bin/busctl"
+            busctl.parent.mkdir()
+            busctl.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_ROOT/busctl"\n')
+            busctl.chmod(0o755)
+            ln = root / "bin/ln"
+            ln.write_text('#!/bin/sh\nprintf "%s\\n" "${3##*/}" >> "$FIXTURE_ROOT/ln"\nexec /bin/ln "$@"\n')
+            ln.chmod(0o755)
+            configfs, saved, sysfs = root / "configfs", root / "card-share", root / "sys"
+            function = configfs / "ac50/functions/mass_storage.sd"
+            function.mkdir(parents=True)
+            (configfs / "ac50/UDC").write_text("fcc00000.usb\n")
+            config = configfs / "ac50/configs/c.1"
+            config.mkdir(parents=True)
+            (config / "mass_storage.sd").symlink_to(function)
+            for name in ("uac2.audio", "ncm.network", "midi.midi"):
+                (configfs / "ac50/functions" / name).mkdir()
+            for name in ("uac2.audio", "midi.midi", "ncm.network"): # as lent: the network after the drive
+                (config / name).symlink_to(configfs / "ac50/functions" / name)
+            (sysfs / "block/mmcblk1/mmcblk1p1").mkdir(parents=True)
+            saved.write_text("mmcblk1 uac2.audio ncm.network midi.midi\n")
+            script = root / "restore.sh"
+            script.write_text(source.replace("/bin/systemctl", shlex.quote(str(systemctl)))
+                              .replace("/sys/kernel/config/usb_gadget", str(configfs))
+                              .replace("/run/sample-base-card-share", str(saved))
+                              .replace('[ -b "/dev/$DISK" ]', "true")
+                              .replace("/sys/block", str(sysfs / "block")))
+            subprocess.run(["sh", str(script)], check=True,
+                           env={**os.environ, "FIXTURE_ROOT": temp, "PATH": str(busctl.parent) + ":" + os.environ["PATH"]})
+            self.assertFalse(os.path.lexists(config / "mass_storage.sd"))
+            self.assertFalse(function.exists())
+            self.assertFalse(saved.exists())
+            self.assertEqual((configfs / "ac50/UDC").read_text(), "fcc00000.usb\n")
+            # Linked again in the saved order (the order the controller hands endpoints out in).
+            self.assertEqual((root / "ln").read_text().split(), ["uac2.audio", "ncm.network", "midi.midi"])
+            for name in ("uac2.audio", "ncm.network", "midi.midi"):
+                self.assertEqual(os.readlink(config / name), str(configfs / "ac50/functions" / name))
+            self.assertIn("/io/github/inmusicdev/edisksd/dev/mmcblk1p1 io.github.inmusicdev.edisksd.Filesystem Mount",
+                          (root / "busctl").read_text())
+
 
 class SdAutorunTests(unittest.TestCase):
     OWNER = "#!/bin/sh\n# MPC_PLUGINS_SD_START\ntrap '/bin/sh \"$(dirname -- \"$0\")/../MPC-Plugins/start-plugins.sh\" x' EXIT\nset -eu\necho ssh\n"

@@ -186,7 +186,7 @@ and a layer only includes the ones before it in this table;
 | --- | --- |
 | `src/surface/` | MIDI parsing and the measured control-surface maps: buttons and knobs, pads, lights and LED colours |
 | `src/dsp/` | Realtime-safe audio pieces: PCM decoding, rate conversion, a lock-free frame ring and the input recorder |
-| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, jack detection, USB-C audio, sync, power key, platform files, storage service |
+| `src/drivers/` | One driver per device: audio, display, MIDI ports, mixer, jack detection, USB-C audio, SD card access over USB-C, sync, power key, platform files, storage service |
 | `src/runtime/` | Hosts one app: the `App` interface (`app.h`), threads, control socket and commands, `status`, options, screen helpers |
 | `src/demos/` | The proofs of concept as one app, one folder each (below) |
 | `src/starter/` | The smallest complete app, to copy for your own |

@@ -35,6 +35,17 @@ void Controller::run(Session& session, ControlServer& server) {
     }
     session.running.store(false);
     if (io_thread.joinable()) io_thread.join();
+    card.shutdown();
+    follow_card(session);
+}
+
+// Service thread: the card share's state for the other threads.
+void Controller::follow_card(Session& session) {
+    const auto& status = card.status();
+    session.card_share.store(uint8_t(status.state));
+    session.card_connected.store(status.connected);
+    session.card_ejected.store(status.ejected);
+    session.card_returns.store(status.returns);
 }
 
 // Service thread. Keeps the surface state and packet log for the `surface`
@@ -56,7 +67,10 @@ void Controller::poll_platform(Session& session) {
         app.jack(event, hardware);
     });
     for (unsigned n = 0; n < jack_count; ++n) session.jacks[n].store(jacks.state(Jack(n))); // -1 once the card is lost.
+    card.poll();
+    follow_card(session);
     app.service(hardware);
+    follow_card(session); // What the app asked of it shows at once
     if (power.poll()) session.last_input.store(pack_last_input(InputKind::Power, 0, power.pressed()));
     if (services.stopping() || app.finished()) session.running.store(false);
 }

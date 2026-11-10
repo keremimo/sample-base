@@ -6,6 +6,45 @@ state=$(/bin/systemctl is-system-running 2>/dev/null || true)
 case "$state" in
     stopping|offline) exit 0 ;;
 esac
+# A card lent to a computer (src/drivers/card_share.h) comes back first: the
+# medium out of the gadget even if the computer holds it, the mass-storage
+# function unlinked and removed, the other functions linked again in the
+# order the saved line names (the card share moved the network function
+# after the drive), the card flushed and mounted by edisksd.
+CARD_SAVED=/run/sample-base-card-share
+DISK= ORDER=
+if [ -r "$CARD_SAVED" ]; then read -r DISK ORDER < "$CARD_SAVED" || true; fi
+case "$DISK" in *[!a-z0-9]*) DISK= ;; esac
+for CARD_FUNCTION in /sys/kernel/config/usb_gadget/*/functions/mass_storage.sd; do
+    [ -d "$CARD_FUNCTION" ] || continue
+    GADGET=${CARD_FUNCTION%/functions/*}
+    { echo > "$CARD_FUNCTION/lun.0/file" || echo 1 > "$CARD_FUNCTION/lun.0/forced_eject"; } 2>/dev/null || true
+    UDC=$(cat "$GADGET/UDC" 2>/dev/null || true)
+    { [ -z "$UDC" ] || echo > "$GADGET/UDC"; } 2>/dev/null || true
+    rm -f "$GADGET"/configs/*/mass_storage.sd 2>/dev/null || true
+    if [ -n "$ORDER" ]; then
+        for CONFIG in "$GADGET"/configs/*/; do
+            for NAME in $ORDER; do
+                case "$NAME" in *[!a-zA-Z0-9._]*|mass_storage.sd) continue ;; esac
+                [ -d "$GADGET/functions/$NAME" ] || continue
+                rm -f "$CONFIG$NAME" 2>/dev/null || true
+                ln -s "$GADGET/functions/$NAME" "$CONFIG$NAME" 2>/dev/null || true
+            done
+            break
+        done
+    fi
+    rmdir "$CARD_FUNCTION" 2>/dev/null || true
+    { [ -z "$UDC" ] || echo "$UDC" > "$GADGET/UDC"; } 2>/dev/null || true
+done
+if [ -n "$DISK" ] && [ -b "/dev/$DISK" ]; then
+    sync
+    for PART in /sys/block/"$DISK"/"$DISK"*; do
+        [ -e "$PART" ] || continue
+        busctl call io.github.inmusicdev.edisksd "/io/github/inmusicdev/edisksd/dev/${PART##*/}" \
+            io.github.inmusicdev.edisksd.Filesystem Mount 'a{sv}' 0 >/dev/null 2>&1 || true
+    done
+fi
+rm -f "$CARD_SAVED"
 # sample-base widened the USB-C audio gadget for stems (src/drivers/usb_gadget.h):
 # the stock app gets its original channel mask back. Any failure here still
 # starts the stock app.

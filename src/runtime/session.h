@@ -45,6 +45,14 @@ struct Session {
     // `prompting`: the runtime draws the prompt instead of the app, and apps
     // should leave button presses alone. The service thread writes `prompt`.
     std::atomic<bool> prompting {false};
+
+    // SD card access (drivers/card_share.h), written by the service thread:
+    // a CardShareState, whether a computer is connected and whether it has
+    // ejected the drive, and a count that moves each time the card comes back.
+    // While the state is not Home nothing may read or write the card.
+    std::atomic<uint8_t> card_share {0};
+    std::atomic<bool> card_connected {false}, card_ejected {false};
+    std::atomic<uint64_t> card_returns {0};
     std::mutex prompt_lock;
     std::string prompt;
 };

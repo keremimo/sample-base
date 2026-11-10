@@ -12,6 +12,7 @@
 #include <vector>
 
 class ClockIo;
+class CardShare;
 class HardwareMixer;
 class JackDetect;
 class Platform;
@@ -32,13 +33,14 @@ struct SurfaceEvent {
 };
 
 // Hardware an app may use from the service thread only, in App::service()
-// and App::command(). The runtime owns it and restores it on exit. The
-// last four are read-only views of what the runtime runs itself.
+// and App::command(). The runtime owns it and restores it on exit (a card
+// lent to a computer comes back). The last four are read-only views of what the runtime runs itself.
 struct Hardware {
     HardwareMixer& mixer;
     Platform& platform;
     SystemServices& services;
     ClockIo& clock;
+    CardShare& card;                  // SD card access over USB-C (drivers/card_share.h)
     const PowerButton& power;         // The power key, polled on this thread
     const JackDetect& jacks;          // Headphones and line out, polled on this thread
     const UsbAudioOutput& usb_output; // What a computer records over USB-C
