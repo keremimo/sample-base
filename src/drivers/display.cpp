@@ -6,6 +6,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -59,19 +61,125 @@ Display::Display() {
         memset(pixels, 0, bytes);
         check(drmModeSetCrtc(fd, crtc, framebuffer, 0, 0, &connector->connector_id, 1, &mode) == 0, "Activate screen");
         changed = true;
+        pending.assign(size_t(width) * height, 0);
+        shown.assign(size_t(width) * height, 0);
+        latest.assign(size_t(width) * height, 0);
+        worker = std::thread([this] { run(); });
     } catch (...) { release(); throw; }
 }
 
-void Display::present(const juce::Image& image) {
+bool Display::present(const juce::Image& image) {
     juce::Image::BitmapData bitmap(image, juce::Image::BitmapData::readOnly);
-    if (bitmap.width != 320 || bitmap.height != 240 || bitmap.pixelStride != 4)
+    if (bitmap.width != width || bitmap.height != height || bitmap.pixelStride != 4)
         throw std::runtime_error("Invalid JUCE screen image");
-    for (int row = 0; row < 240; ++row)
-        memcpy(static_cast<char*>(pixels) + row * pitch, bitmap.getLinePointer(row), 320 * 4);
-    check(drmModeDirtyFB(fd, framebuffer, nullptr, 0) == 0, "Flush screen");
+    presented.fetch_add(1, std::memory_order_relaxed);
+    bool same = !first_present;
+    for (int row = 0; row < height; ++row) {
+        auto* line = bitmap.getLinePointer(row);
+        auto* kept = latest.data() + row * width;
+        if (memcmp(kept, line, width * 4) != 0) { memcpy(kept, line, width * 4); same = false; }
+    }
+    first_present = false;
+    std::unique_lock<std::mutex> guard(lock);
+    if (failure) std::rethrow_exception(failure);
+    if (same) return false;
+    wake.wait(guard, [&] { return (!queued && !busy) || failure; });
+    if (failure) std::rethrow_exception(failure);
+    pending = latest;
+    queued = true;
+    wake.notify_all();
+    return true;
+}
+
+Display::Stats Display::stats() const {
+    Stats s;
+    s.presented = presented.load(std::memory_order_relaxed); s.pushed = pushed.load(std::memory_order_relaxed);
+    s.pixels = sent_pixels.load(std::memory_order_relaxed);
+    s.last_push_us = last_push_us.load(std::memory_order_relaxed); s.max_push_us = max_push_us.load(std::memory_order_relaxed);
+    s.full_push_us = full_push_us.load(std::memory_order_relaxed);
+    return s;
+}
+
+void Display::run() {
+    std::unique_lock<std::mutex> guard(lock);
+    while (true) {
+        wake.wait(guard, [&] { return queued || stopping; });
+        if (stopping) return;
+        queued = false; busy = true;
+        guard.unlock();
+        std::exception_ptr error;
+        try { push(); } catch (...) { error = std::current_exception(); }
+        guard.lock();
+        busy = false;
+        if (error) failure = error;
+        wake.notify_all();
+        if (error) return;
+    }
+}
+
+namespace {
+// Rows y0..y1 and columns x0..x1 of the screen, inclusive.
+struct Band { int y0, y1, x0, x1; };
+// Bands closer than this many rows go out as one: each push costs a commit
+// and a command header on the panel, so a few spare rows are cheaper.
+constexpr int band_gap = 8;
+constexpr size_t most_bands = 4;
+}
+
+void Display::push() {
+    using Clock = std::chrono::steady_clock;
+    auto start = Clock::now();
+    std::vector<Band> bands;
+    bool whole = first;
+    if (whole) bands.push_back({0, height - 1, 0, width - 1});
+    else for (int y = 0; y < height; ++y) {
+        const uint32_t* now = pending.data() + y * width;
+        const uint32_t* was = shown.data() + y * width;
+        if (memcmp(now, was, width * 4) == 0) continue;
+        int left = 0, right = width - 1;
+        while (now[left] == was[left]) ++left;
+        while (now[right] == was[right]) --right;
+        if (!bands.empty() && y - bands.back().y1 <= band_gap) {
+            auto& band = bands.back();
+            band.y1 = y; band.x0 = std::min(band.x0, left); band.x1 = std::max(band.x1, right);
+        } else bands.push_back({y, y, left, right});
+    }
+    // Too many bands: join the two neighbours with the smallest gap.
+    while (bands.size() > most_bands) {
+        size_t join = 0;
+        for (size_t n = 1; n + 1 < bands.size(); ++n)
+            if (bands[n + 1].y0 - bands[n].y1 < bands[join + 1].y0 - bands[join].y1) join = n;
+        auto& a = bands[join]; const auto& b = bands[join + 1];
+        a.y1 = b.y1; a.x0 = std::min(a.x0, b.x0); a.x1 = std::max(a.x1, b.x1);
+        bands.erase(bands.begin() + long(join) + 1);
+    }
+    if (bands.empty()) return;
+    uint64_t count = 0;
+    for (const auto& band : bands) {
+        size_t span = size_t(band.x1 - band.x0 + 1) * 4;
+        for (int y = band.y0; y <= band.y1; ++y) {
+            const uint32_t* source = pending.data() + y * width + band.x0;
+            memcpy(static_cast<char*>(pixels) + size_t(y) * pitch + size_t(band.x0) * 4, source, span);
+            memcpy(shown.data() + y * width + band.x0, source, span);
+        }
+        drmModeClip clip {uint16_t(band.x0), uint16_t(band.y0), uint16_t(band.x1 + 1), uint16_t(band.y1 + 1)};
+        check(drmModeDirtyFB(fd, framebuffer, &clip, 1) == 0, "Flush screen");
+        count += uint64_t(band.x1 - band.x0 + 1) * uint64_t(band.y1 - band.y0 + 1);
+    }
+    first = false;
+    auto us = uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count());
+    pushed.fetch_add(1, std::memory_order_relaxed); sent_pixels.fetch_add(count, std::memory_order_relaxed);
+    last_push_us.store(us, std::memory_order_relaxed);
+    if (us > max_push_us.load(std::memory_order_relaxed)) max_push_us.store(us, std::memory_order_relaxed);
+    if (count == uint64_t(width) * height) full_push_us.store(us, std::memory_order_relaxed);
 }
 
 void Display::release() {
+    if (worker.joinable()) {
+        { std::lock_guard<std::mutex> guard(lock); stopping = true; }
+        wake.notify_all();
+        worker.join();
+    }
     if (fd >= 0 && changed) {
         if (previous && previous->mode_valid)
             drmModeSetCrtc(fd, previous->crtc_id, previous->buffer_id, previous->x, previous->y, &connector_id, 1, &previous->mode);

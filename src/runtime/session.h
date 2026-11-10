@@ -12,11 +12,19 @@
 //   audio    AudioDevice::run(), calling App::render()
 //   MIDI     Controller::run_midi(): surface and external MIDI, lights
 //   service  Controller::run(): control commands and slow hardware requests
-//   screen   run_app(): a frame every 75 ms
+//   screen   run_app(): up to 60 frames a second, as fast as the panel takes
+//            them; 10 a second once the screen stands still
+// The screen thread's counters (Display::Stats, plus the last draw).
+struct ScreenStats {
+    std::atomic<uint64_t> presented {0}, pushed {0}, pixels {0};
+    std::atomic<uint32_t> last_push_us {0}, max_push_us {0}, full_push_us {0}, draw_us {0};
+};
+
 // Every field is atomic or guarded by a lock. Comments name the writer.
 struct Session {
     std::atomic<bool> running {true}, failed {false}, screenshot {false};
     AudioStats audio; // Audio thread.
+    ScreenStats screen; // Screen thread.
 
     // Surface diagnostics, written by the MIDI thread.
     std::atomic<uint32_t> held {0};                // Pads held now; bit 0 is pad 1.

@@ -11,6 +11,8 @@ import uuid
 ROOT = Path(__file__).resolve().parent
 STOCK_SHA256 = "b6584cba76e416e432ad202509099d34373dc2c3d6a8fb625f5678bf0193b508"
 UNIT_PATH = "/run/systemd/system/sample-base.service"
+SWAP_DROPIN_DIR = UNIT_PATH + ".d"
+SWAP_DROPIN = SWAP_DROPIN_DIR + "/swap.conf"
 ACTIVE = "/run/sample-base"
 
 
@@ -88,7 +90,10 @@ class Device:
             raise ValueError("App names use letters, digits, - and _")
         release = self.stage()
         try:
-            self.run("systemctl stop sample-base.service", check=False)
+            # Swap apps without the stock app in between: a runtime drop-in
+            # clears ExecStopPost (restore-stock.sh) for this one stop.
+            self.run("mkdir -p " + SWAP_DROPIN_DIR + " && printf '[Service]\\nExecStopPost=\\n' > " + SWAP_DROPIN
+                     + " && systemctl daemon-reload && systemctl stop sample-base.service; rm -f " + SWAP_DROPIN, check=False)
             self.run("ln -s " + release + " " + ACTIVE + ".next && mv -Tf " + ACTIVE + ".next " + ACTIVE)
             self.run("cat > " + UNIT_PATH, input=service_unit(release, seconds, app))
             self.run("systemctl daemon-reload && systemctl start sample-base.service")

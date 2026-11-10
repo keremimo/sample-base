@@ -61,7 +61,7 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 | `midi(port, packet)` | MIDI | Every packet from an external port (DIN or USB MIDI), including clock and SysEx. |
 | `midi_lost()` | MIDI | An external MIDI input disappeared; silence its notes. |
 | `lights(lights, now)` | MIDI | Every 5 ms. Ask for pad, fader, bank and button lights; only changes go to the surface. |
-| `draw(g)` | screen | Every 75 ms. Paint the whole 320 × 240 screen. `load_typeface()` in `runtime/screen.h` gives the device font. |
+| `draw(g)` | screen | Once per frame, as fast as the panel takes frames and at most 60 a second; animate from the clock, not the frame count. Paint the whole 320 × 240 screen. `load_typeface()` in `runtime/screen.h` gives the device font. |
 | `service(hardware)` | service | Every few milliseconds. Slow work: mixer routes, storage, files. |
 | `jack(event, hardware)` | service | Headphones or line out plugged or unplugged (`drivers/jacks.h`), about 150 ms after the contact moved. Each jack also arrives once with `event.initial` set when its state is first known, so routing can follow the jacks from the start. |
 | `command(action, argument, hardware)` | service | A `--ctl` command the runtime does not know. Return the reply, or nothing. |

@@ -33,22 +33,24 @@ private:
 };
 
 // Snapshot of the pad touch page for one frame. The trace keeps one sample
-// per screen frame, oldest first: about five seconds at 75 ms a frame.
+// every 75 ms, oldest first: about five seconds.
 struct PadsView {
     static constexpr unsigned trace_length = 68;
     std::array<uint8_t, 16> velocity {}, pressure {}, peak {}; // Latest strike, pressure now, highest this touch.
-    std::array<uint8_t, trace_length> trace {};   // Highest pressure on any pad during each frame.
-    std::array<uint8_t, trace_length> strikes {}; // Velocity of a strike during each frame, 0 for none.
+    std::array<uint8_t, trace_length> trace {};   // Highest pressure on any pad during each sample.
+    std::array<uint8_t, trace_length> strikes {}; // Velocity of a strike during each sample, 0 for none.
 };
 
-// Screen thread: the pressure history, sampled every frame whichever page is
-// open so it is current when the pad page opens.
+// Screen thread: the pressure history, sampled every 75 ms whichever page is
+// open so it is current when the pad page opens. Called every screen frame;
+// frames between samples leave it alone.
 class PadTrace {
 public:
     // `velocity` is the last strike's velocity (Session::velocity).
-    void advance(PadTouches& pads, int velocity);
+    void advance(PadTouches& pads, int velocity, std::chrono::steady_clock::time_point now);
     PadsView view(const PadTouches& pads) const;
 private:
     std::array<uint8_t, PadsView::trace_length> trace {}, strike_marks {};
     unsigned strikes_seen = 0;
+    std::chrono::steady_clock::time_point next_sample {};
 };

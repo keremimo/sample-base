@@ -65,6 +65,20 @@ class SwitchingTests(unittest.TestCase):
         self.assertIn("systemctl is-active --quiet ac50.service", calls)
         self.assertFalse(any("ac50.service.d" in command for command in calls))
 
+    def test_start_swaps_apps_without_restoring_stock(self):
+        device = Device()
+        calls = []
+        def run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess([], 0, "OK frames=0", "")
+        with patch.object(device, "stage", return_value="/run/sample-base-release-abc"), patch.object(device, "run", side_effect=run):
+            device.start(app="melodee")
+        stop = next(command for command in calls if "systemctl stop sample-base.service" in command)
+        self.assertIn("ExecStopPost=", stop)
+        self.assertLess(stop.index("swap.conf"), stop.index("systemctl stop sample-base.service"))
+        self.assertTrue(stop.endswith("rm -f /run/systemd/system/sample-base.service.d/swap.conf"))
+        self.assertNotIn("systemctl start ac50.service", calls)
+
     def test_identity_mismatch_cannot_stop_stock(self):
         device = Device()
         with patch.object(device, "run", return_value=subprocess.CompletedProcess([], 0, "wrong", "")) as run:

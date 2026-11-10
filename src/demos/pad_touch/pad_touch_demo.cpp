@@ -53,7 +53,10 @@ void PadTouchLights::close(SurfaceLights& lights) {
     lights.button(SurfaceButton::SixteenLevels, ButtonLight::Off);
 }
 
-void PadTrace::advance(PadTouches& pads, int velocity) {
+void PadTrace::advance(PadTouches& pads, int velocity, std::chrono::steady_clock::time_point now) {
+    constexpr auto sample = std::chrono::milliseconds(75);
+    if (now < next_sample) return;
+    next_sample = std::max(next_sample + sample, now);
     std::rotate(trace.begin(), trace.begin() + 1, trace.end());
     std::rotate(strike_marks.begin(), strike_marks.begin() + 1, strike_marks.end());
     unsigned strikes = pads.strikes();
