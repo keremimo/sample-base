@@ -28,11 +28,20 @@ def main():
     entries = git('-C', str(root), 'ls-files', '--stage', '-z').split(b'\0')
     indexed = {}
     errors = []
+    # A submodule named in .gitmodules is a commit of another repository,
+    # checked by that repository's own hook (an app keeps sample-base so).
+    submodules = set()
+    if (root / '.gitmodules').is_file():
+        listed = subprocess.run(['git', '-C', str(root), 'config', '-f', '.gitmodules', '--get-regexp', r'\.path$'],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        submodules = {line.split(b' ', 1)[1] for line in listed.stdout.splitlines() if b' ' in line}
     for entry in filter(None, entries):
         metadata, name = entry.split(b'\t', 1)
         mode, blob, stage = metadata.split()
         if stage != b'0':
             errors.append((name, 'unmerged index entry'))
+            continue
+        if mode == b'160000' and name in submodules:
             continue
         if mode not in (b'100644', b'100755'):
             errors.append((name, 'symlink or submodule is not source text'))
