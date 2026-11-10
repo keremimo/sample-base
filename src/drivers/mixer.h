@@ -15,6 +15,8 @@ public:
     HardwareMixer& operator=(const HardwareMixer&) = delete;
     bool set(unsigned id, const std::vector<long>& values);
     bool input(const std::string& source);
+    // The built-in speaker on or off; restored with the other changes on exit.
+    bool speaker(bool enabled) { return named_switch("Builtin Speaker Switch", enabled); }
     std::string json() const;
     // The first value of a readable boolean control such as "Headphones
     // Jack" (jack controls are card controls, switches mixer controls):
