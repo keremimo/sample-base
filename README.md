@@ -150,6 +150,24 @@ finish stopping services. Existing stock/plugin startup configuration is preserv
 The session unit and binaries live under `/run`; reboot uses the previous
 startup configuration. No firmware, stock libraries or SD startup files change.
 
+To start an app from the SD card at every boot:
+
+```sh
+python3 device.py install-sd --app melodee
+python3 device.py uninstall-sd
+```
+
+`install-sd` copies the app, the recovery script and two small boot scripts
+into `sample-base/` on the card with their hashes, keeps the card's autorun
+in `sample-base/autorun-backup/`, and chains a start after the card's own
+`autorun/autorun.sh` (signed in `autorun.check`, the firmware's salted
+digest). At boot the stock app runs that autorun; the boot script hands off
+to a separate service that checks the stock identity and the files, copies
+them into a new RAM directory, runs the self-test and starts the same
+session unit as `start`. Leaving the app (or any failure) returns to stock
+until the next boot. Only the card changes; `--remove-plugins` also takes
+MPC-Plugins' start out of that autorun.
+
 For a bounded test that automatically returns to stock:
 
 ```sh

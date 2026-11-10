@@ -91,3 +91,29 @@ class RecoveryScriptTests(unittest.TestCase):
                 self.assertEqual(calls.exists(), state in ("running", "degraded"))
                 if calls.exists():
                     self.assertEqual(calls.read_text().strip(), "start ac50.service")
+
+
+class SdAutorunTests(unittest.TestCase):
+    OWNER = "#!/bin/sh\n# MPC_PLUGINS_SD_START\ntrap '/bin/sh \"$(dirname -- \"$0\")/../MPC-Plugins/start-plugins.sh\" x' EXIT\nset -eu\necho ssh\n"
+
+    def test_check_is_the_salted_digest(self):
+        from device import autorun_check
+        self.assertEqual(autorun_check("{}", "#!/bin/sh\n"),
+                         __import__("hashlib").sha256(b"{}#!/bin/sh\nf7bed1c9-7e90-4731-9194-c996666b4331").hexdigest())
+
+    def test_chaining_keeps_the_owner_script_and_is_repeatable(self):
+        from device import chain_autorun, SD_MARKER
+        with self.assertRaises(RuntimeError):
+            chain_autorun(self.OWNER)  # MPC-Plugins is there: only replaced when asked
+        chained = chain_autorun(self.OWNER, remove_plugins=True)
+        self.assertTrue(chained.startswith("#!/bin/sh\n" + SD_MARKER + "\ntrap '"))
+        self.assertNotIn("MPC-Plugins", chained)
+        self.assertTrue(chained.endswith("set -eu\necho ssh\n"))
+        self.assertEqual(chain_autorun(chained), chained)
+        with self.assertRaises(RuntimeError):
+            chain_autorun("echo no shebang\n")
+
+    def test_uninstall_takes_out_only_our_lines(self):
+        from device import chain_autorun, without_marker, SD_MARKER
+        plain = "#!/bin/sh\necho ssh\n"
+        self.assertEqual(without_marker(chain_autorun(plain), SD_MARKER, "sample-base/sd-boot.sh"), plain)
