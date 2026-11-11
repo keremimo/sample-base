@@ -77,4 +77,10 @@ if [ -r "$SAVED" ] && read -r FUNCTION MASK RATE < "$SAVED"; then
     fi
     rm -f "$SAVED"
 fi
+# sample-base sets the codec link's pmdown_time to 0 only while its stream
+# ends (src/drivers/codec_power.h); one killed right then leaves it there.
+# The kernel's own 5000 ms goes back for the stock app.
+for PMDOWN in /sys/class/sound/card*/device/*/pmdown_time; do
+    if [ -w "$PMDOWN" ] && [ "$(cat "$PMDOWN" 2>/dev/null)" = 0 ]; then echo 5000 > "$PMDOWN" 2>/dev/null || true; fi
+done
 exec /bin/systemctl start ac50.service

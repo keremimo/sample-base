@@ -28,6 +28,12 @@ class PlatformTests(unittest.TestCase):
             compile_fixture(binary, "tests/system.cpp", "src/drivers/platform.cpp")
             subprocess.run([str(binary)], check=True, timeout=5)
 
+    def test_codec_link_power_clock_and_immediate_power_down(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "codec-power"
+            compile_fixture(binary, "tests/codec_power.cpp", "src/drivers/codec_power.cpp")
+            subprocess.run([str(binary), temp], check=True, timeout=5)
+
     @unittest.skipUnless(sys.platform == "linux" and shutil.which("dbus-daemon"), "requires Linux system bus libraries")
     def test_storage_service_and_suspend_on_private_bus(self):
         with tempfile.TemporaryDirectory() as temp:

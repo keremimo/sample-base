@@ -30,6 +30,7 @@ The board wiring comes from `arch/arm64/boot/dts/rockchip/rk3566-az07-ac50.dts`
 and `rk3566-az07.dtsi` inside the Linux archive. Other useful references are
 `sound/drivers/serial-generic.c`, `sound/soc/codecs/ak4558.c`,
 `sound/soc/codecs/simple-mute.c`, `sound/soc/generic/simple-card-utils.c`,
+`sound/soc/soc-pcm.c` and `sound/soc/soc-dapm.c` (`pmdown_time`, the power-down sequence),
 `drivers/gpu/drm/tiny/st7796s.c` and
 `drivers/power/supply/generic-adc-mains.c`. Storage interfaces come from
 `edisksd`'s `src/dbus.h`, `src/main.c` and `src/filesystem.c`.
@@ -42,7 +43,7 @@ The kernel sources remain under their own upstream licences.
 
 | Area | Public wiring | Application interface |
 | --- | --- | --- |
-| Audio output and capture | `I2S` card, AK4558 codec, stereo, 44.1 kHz | `AudioDevice` gives a fixed 128-frame stereo S32 callback with input and output blocks; partial I/O and underruns are handled outside the callback |
+| Audio output and capture | `I2S` card, AK4558 codec, stereo, 44.1, 48 or 96 kHz | `AudioDevice` gives a fixed 128-frame stereo S32 callback with input and output blocks; partial I/O and underruns are handled outside the callback; it sets the codec's clocks only while the codec is powered down behind the board's output mute ("Opening and closing without a click") |
 | Microphone, line input, speaker and jacks | DAPM pin switches `Builtin Microphone`, `TRS`, `Builtin Speaker`; headphone/line-out detection | `HardwareMixer` lists live ALSA controls, types, ranges, enum labels and jack values; validates changes and restores changed values on normal exit |
 | Jack detection | `hp-det-gpio` GPIO3_B0 and `out-det-gpio` GPIO3_B1 on the I2S simple-audio-card, debounced by the kernel | `JackDetect` follows the `Headphones Jack` and `Line Out Jack` card controls through ALSA control events; the runtime calls `App::jack()` on every plug and unplug |
 | Surface inputs and outputs | UART3, 4,000,000 baud, `Control Surface` raw MIDI | `HardwareMidi` receives all channel, pressure, system-common, realtime and bounded SysEx messages; queues complete outbound messages |
@@ -184,8 +185,12 @@ has not been measured.
 base requires stereo S32 and 128-frame periods, at 44.1, 48 or 96 kHz with
 two to eight periods queued (`AudioFormat`; 44.1 kHz and three by default).
 An app asks for its format with `App::audio_format()`; the runtime reopens
-the device when that changes (a short silence) and falls back to the default
-when the PCM refuses it. The AK4558 takes all three rates: its driver sets
+the device when that changes (about a second of silence at the headphones
+and line out, below) and falls back to the default when the PCM refuses it.
+The runtime opens the device with the format `audio_format()` gives as it
+starts, so an app that keeps its format in a settings file reads that file
+in its constructor rather than reopening a moment later. The AK4558 takes
+all three rates: its driver sets
 normal speed for 44.1 / 48 kHz and double speed for 96 kHz (`DFS`), with the
 card's fixed 512 fs master clock (24.576 MHz at 48 kHz, read from the clock
 tree; 96 kHz opens and runs without errors, its sound not yet checked by ear).
@@ -194,6 +199,37 @@ this card (plain `simple-audio-card` has no DPCM back end). Unsupported
 playback settings fail explicitly; optional capture failure is reported by
 `capture_active=0`. `status` adds `audio_rate`, `audio_periods`,
 `audio_latency_frames` and `audio_reopens`.
+
+### Opening and closing without a click
+
+Headphones and line out pass through the board's analog mute, the
+`simple-audio-mute` aux device (`mute-gpios` GPIO4_C0, inMusic's
+`sound/soc/codecs/simple-mute.c`): DAPM shuts it before powering the
+codec's output path down (then waits `mute-delay-ms`, 50 ms) and opens it
+`unmute-delay-ms`, 1000 ms, after powering it up. The AK4558 driver sets
+`use_pmdown_time`, so the kernel powers the path down only `pmdown_time`
+(5000 ms) after a playback stream ends, and the mute stays open meanwhile.
+A stream opened at another rate inside those five seconds sets a new master
+clock (22.5792 MHz for 44.1 kHz, 24.576 MHz for 48 kHz) on a codec that is
+powered and unmuted, and the jacks click. That happened at every start
+while an app's rate differed from the one before it: the stock app's
+44.1 kHz, or the 44.1 kHz default an app opened before reopening at its
+saved rate.
+
+`AudioDevice` therefore sets the codec's clocks only while it is powered
+down ([src/drivers/codec_power.h](../src/drivers/codec_power.h)):
+
+| Moment | What it does |
+| --- | --- |
+| Close | After the stream stops, its hardware setup is freed (`snd_pcm_hw_free()`) with the link's `pmdown_time` (`/sys/class/sound/card<N>/device/<link>/pmdown_time`, the link named by the PCM's id) at 0 for that moment and then restored: DAPM shuts the mute, waits 50 ms, powers the DACs down and holds the codec in reset (`PDN`) at once. Every close does this, a reopen and leaving the app alike, so the next stream, at any rate, starts a codec that is off. |
+| Open | When the codec is still powered (the link's `dapm_widget` reads `PM State` other than `Off`) at another rate, the stream another program left, the device first takes it over at that rate: the master clock's rate (`i2s1_mclkout_tx` in debugfs, `/sys/kernel/debug/clk/i2s1_mclkout_tx/clk_rate`, ÷ 512) names it, and preparing a stream cancels the kernel's pending power-down without touching the clock. That setup is then freed as at a close, and the wanted rate is set on a codec that is off. |
+
+The headphones and line out then stay muted for the mute's 1000 ms after a
+stream starts; the built-in speaker has no such mute (its amplifier powers
+up after the DACs). A PCM without an ASoC codec link (USB, `null`, a host
+build), or a codec whose clock rate cannot be read, is opened and closed
+as before. A sample-base killed while `pmdown_time` reads 0 leaves it there;
+restore-stock.sh puts the kernel's 5000 back.
 
 The USB-C audio gadget follows the device's rate: when it changes, the
 service thread rewrites the UAC2 function's `p_srate` and `c_srate` (equal,

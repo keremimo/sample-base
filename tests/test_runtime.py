@@ -62,7 +62,7 @@ class RuntimeTests(unittest.TestCase):
     def test_partial_audio_io_and_xrun_recovery(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "audio"
-            compile_fixture(binary, "tests/audio.cpp", "src/drivers/audio.cpp", "src/drivers/platform.cpp",
+            compile_fixture(binary, "tests/audio.cpp", "src/drivers/audio.cpp", "src/drivers/codec_power.cpp", "src/drivers/platform.cpp",
                             extra=("-lasound", "-Wl,--wrap=snd_pcm_readi", "-Wl,--wrap=snd_pcm_writei",
                                    "-Wl,--wrap=snd_pcm_wait", "-Wl,--wrap=snd_pcm_prepare", "-Wl,--wrap=snd_pcm_start"))
             subprocess.run([str(binary)], check=True, timeout=10)

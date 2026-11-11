@@ -63,9 +63,13 @@ int run_app(App& app, const Options& options) {
     UsbAudioOutput usb_output; // Outlives the audio thread, which feeds it.
     AudioFormat requested = app.audio_format(); // Screen thread: what the app last asked for
     auto audio = open_audio(options, requested);
+    usb_output.set_device_rate(audio->format().rate);
     Controller controller(app, options.surface_required, usb_output, options.usb_output == "auto");
     ControlServer server(options.runtime);
     Session session;
+    // The format open now, before any thread starts: the service thread sets the USB-C gadget's rate from it
+    // on its first pass, which may come before the audio thread's first block.
+    session.audio.rate.store(audio->format().rate); session.audio.periods.store(audio->format().periods);
     app.attach(session);
     AudioRoute route {app, usb_output};
     if (options.usb_output != "off") usb_output.start(options.usb_output);

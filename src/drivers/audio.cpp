@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "drivers/audio.h"
+#include "drivers/codec_power.h"
 #include "drivers/platform.h"
 #include <algorithm>
 #include <cmath>
@@ -18,6 +19,19 @@ float block_peak(const AudioBlock& block) {
     double peak = 0;
     for (auto sample : block) peak = std::max(peak, std::abs(sample / 2147483648.0));
     return float(peak);
+}
+// The ASoC codec behind an open playback PCM (drivers/codec_power.h); none for USB, "null" and the like.
+CodecLink codec_of(snd_pcm_t* pcm) {
+    snd_pcm_info_t* info; snd_pcm_info_alloca(&info);
+    if (snd_pcm_info(pcm, info) < 0) return {};
+    const char* id = snd_pcm_info_get_id(info);
+    return codec_link(snd_pcm_info_get_card(info), id ? id : "");
+}
+// Ends a stopped playback PCM's hardware setup with its codec powered down at once, behind the board's
+// output mute, rather than pmdown_time later: whatever opens it next sets its clocks while it is off.
+void free_quietly(snd_pcm_t* pcm) {
+    ImmediatePowerDown now(codec_of(pcm));
+    snd_pcm_hw_free(pcm);
 }
 }
 bool AudioFormat::valid() const {
@@ -48,16 +62,29 @@ AudioDevice::AudioDevice(const std::string& out, const std::string& in, AudioFor
                                                   + std::to_string(format.periods) + " periods");
     check(snd_pcm_open(&output, out.c_str(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK), "Open playback");
     try {
+        // A stream another program ended moments ago leaves the codec powered at that program's rate (the
+        // stock app's 44.1 kHz) for pmdown_time: a new clock now clicks in the jacks. Taking the stream over
+        // at that rate cancels the kernel's delayed power-down without touching the clock; freeing it then
+        // powers the codec down, and this format's clock is set while it is off (HARDWARE.md, "Opening and
+        // closing without a click").
+        CodecLink codec = codec_of(output);
+        AudioFormat running {codec_clock_rate(codec), format.periods};
+        if (running.rate != format.rate && running.valid() && codec_powered(codec)) {
+            try { configure(output, false, running); } catch (const std::exception&) {}
+            free_quietly(output);
+        }
         configure(output, false, format);
         if (in != "off" && snd_pcm_open(&input, in.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK) >= 0) {
             try { configure(input, true, format); }
             catch (const std::exception& error) { std::cerr << "Capture unavailable: " << error.what() << '\n'; snd_pcm_close(input); input = nullptr; }
         }
-    } catch (...) { snd_pcm_close(output); output = nullptr; throw; }
+    } catch (...) { free_quietly(output); snd_pcm_close(output); output = nullptr; throw; }
 }
+// The codec powers down as the device closes, not pmdown_time later: the next device, at any rate, or the
+// next program, starts it from off behind the board's output mute, which opens a second after it starts.
 AudioDevice::~AudioDevice() {
     if (input) { snd_pcm_drop(input); snd_pcm_close(input); }
-    if (output) { snd_pcm_drop(output); snd_pcm_close(output); }
+    if (output) { snd_pcm_drop(output); free_quietly(output); snd_pcm_close(output); }
 }
 int AudioDevice::recover(snd_pcm_t* pcm, int error, bool capture) {
     // Avoid snd_pcm_recover's potentially unbounded suspend/resume loop.

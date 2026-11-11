@@ -85,7 +85,7 @@ through atomics, `MidiQueue` (single producer, single consumer) or a lock.
 | Hook | Thread | When |
 | --- | --- | --- |
 | `render(input, output)` | audio | Every 128 frames (2.9 ms at 44.1 kHz). Fill `output` from `input`; both are interleaved stereo S32 at the device's rate. Input is silent without capture. |
-| `audio_format()` | any | Optional: the rate (44.1, 48, 96 kHz) and periods queued (2–8) the app wants; the runtime reopens the device within about 0.1 s of a change. The default is 44.1 kHz, three periods. |
+| `audio_format()` | any | Optional: the rate (44.1, 48, 96 kHz) and periods queued (2–8) the app wants; the runtime opens the device so as it starts, and reopens it within about 0.1 s of a change (about a second of silence at the headphones and line out while the board's mute holds). Know it from the constructor: an app that keeps it in a settings file reads that file there, or the runtime opens the default and reopens at once. The default is 44.1 kHz, three periods. |
 | `audio_opened(format)` | audio | Before the first `render()` of each opened device: the rate and frames queued it runs at. |
 | `stems()` | audio | Right after each `render()`. Optional: a `UsbStems` block (`drivers/usb_audio.h`) the app wrote in `render()`, one mono float channel per track, which a computer records on USB-C channels 3–18. The default, null, sends silence there. |
 | `surface(event)` | MIDI | Every control-surface message. `event.pad` is 0–15 for a pad's note-on, note-off or pressure; `event.input` names a button or control (`surface/controls.h`); `event.syncing` marks the startup position replies. |
