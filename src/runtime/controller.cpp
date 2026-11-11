@@ -13,6 +13,7 @@
 
 namespace {
 using Clock = std::chrono::steady_clock;
+uint64_t monotonic_ns() { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()); }
 } // namespace
 
 Controller::Controller(App& app, bool required, UsbAudioOutput& usb, bool usb_rate)
@@ -121,11 +122,11 @@ void Controller::run_midi(Session& session) {
             if (sync_requested.exchange(false)) request_positions();
             // Audition: pad 1 pressed for 300 ms, as if by hand.
             if (audition_requested.exchange(false)) {
-                surface_event(session, {0x99, surface_pad_notes[0], 100}, false); ++session.synthetic_events;
+                surface_event(session, {0x99, surface_pad_notes[0], 100}, false, monotonic_ns()); ++session.synthetic_events;
                 release = now + std::chrono::milliseconds(300);
             }
             if (now >= release) {
-                surface_event(session, {0x89, surface_pad_notes[0], 0}, false); ++session.synthetic_events;
+                surface_event(session, {0x89, surface_pad_notes[0], 0}, false, monotonic_ns()); ++session.synthetic_events;
                 release = Clock::time_point::max();
             }
             MidiSendRequest request;
@@ -175,7 +176,7 @@ void Controller::midi_packet(Session& session, const MidiPortInfo& port, const M
         MidiEvent event;
         if (!channel_event(packet, event)) return;
         session.last_midi.store((unsigned(event.status) << 16) | (unsigned(event.key) << 8) | event.value);
-        surface_event(session, event, syncing);
+        surface_event(session, event, syncing, packet.timestamp_ns);
         return;
     }
     ++session.external_events;
@@ -187,8 +188,8 @@ void Controller::midi_packet(Session& session, const MidiPortInfo& port, const M
 // app sees it: wheel Push returns to the stock app (unless push-exit is off),
 // the last control touched and the held pads are tracked, and replies to the
 // position request are not counted as moves.
-void Controller::surface_event(Session& session, MidiEvent midi_event, bool syncing) {
-    SurfaceEvent event {midi_event, surface_input(midi_event), pad_index(midi_event), syncing};
+void Controller::surface_event(Session& session, MidiEvent midi_event, bool syncing, uint64_t timestamp_ns) {
+    SurfaceEvent event {midi_event, surface_input(midi_event), pad_index(midi_event), syncing, timestamp_ns};
     const auto& input = event.input;
     if (is_button(input, SurfaceButton::WheelPush) && input.pressed && session.push_exit.load() && !app.claims_wheel_push()) {
         session.running.store(false); return;

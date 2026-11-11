@@ -45,7 +45,7 @@ private:
     // controller.cpp
     void run_midi(Session& session);
     void midi_packet(Session& session, const MidiPortInfo& port, const MidiPacket& packet, bool syncing);
-    void surface_event(Session& session, MidiEvent midi, bool syncing);
+    void surface_event(Session& session, MidiEvent midi, bool syncing, uint64_t timestamp_ns);
     void record_surface_packets();
     void poll_platform(Session& session);
     void follow_card(Session& session);

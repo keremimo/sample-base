@@ -25,11 +25,15 @@ struct UsbStems;
 // (Kind::None for pads); `pad` is 0-15 for a pad's note-on, note-off or
 // pressure and -1 otherwise. `syncing` marks the surface's replies to the
 // startup position request: controls at their current positions, not moves.
+// `timestamp_ns` is when the message came in, CLOCK_MONOTONIC (the kernel's
+// receive stamp where the port has one, else when the MIDI thread read it),
+// so an app can place a pad hit to the frame; 0 for one made up by the app.
 struct SurfaceEvent {
     MidiEvent midi;
     SurfaceInput input;
     int pad = -1;
     bool syncing = false;
+    uint64_t timestamp_ns = 0;
 };
 
 // Hardware an app may use from the service thread only, in App::service()
