@@ -122,6 +122,22 @@ build/sample-base --preview-system build/preview-system.png [health|audio|ports|
 
 No offline mode opens the MPC's audio, display or control surface.
 
+## Install from a release (no SSH)
+
+Each [release](https://github.com/keremimo/sample-base/releases) has a zip
+with an `autorun` folder. Copy it to the top level of the MPC's microSD card
+(move any existing `autorun` folder away first) and switch the MPC on: the
+stock app starts, runs the card's signed autorun, and a few seconds later
+the demos take over. Push the wheel to go back to stock until the next boot;
+delete the folder to uninstall. The zip's `README.txt` has the details.
+
+To make one, commit, then run `./release.sh v0.1.0`. It builds, strips and
+self-tests the app, and [tools/make_release.py](tools/make_release.py)
+writes `dist/sample-base-demos-MPC-Sample-<version>.zip` and its `.sha256`
+from [release/README.txt](release/README.txt), the
+[SD boot scripts](install/) and the licences. The autorun hands
+`autorun/sample-base/` to the same SD boot path as `install-sd` below.
+
 ## Run on the MPC
 
 Connect USB networking with root SSH access configured:
