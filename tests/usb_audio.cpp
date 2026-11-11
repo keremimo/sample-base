@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A fake UAC2 gadget card in front of ALSA's null PCM, both ways: discovery
 // by driver name, waiting while the host is idle, opening at the host's rate,
-// sample conversion to and from 44.1 kHz and reopening when the host changes
-// rate or stops, and an 18-channel gadget carrying the main mix and stems.
+// sample conversion to and from the device's rate and reopening when the host
+// changes rate or stops, and an 18-channel gadget carrying the main mix and
+// stems. Then the input's drift trim against a host clock running fast or
+// slow, and the converter's flatness and alias rejection.
 #include "drivers/usb_audio.h"
 #include <alsa/asoundlib.h>
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <thread>
+#include <vector>
 
 static std::atomic<bool> gadget {false};
 static std::atomic<long> rate {0}, playback_rate {0};
@@ -20,6 +26,14 @@ static std::atomic<unsigned> gadget_channels {0}, stem_frames {0}; // 0: the PCM
 static std::mutex name_lock;
 static std::string opened, opened_playback;
 static int fake_ctl = 0;
+// Paced capture: the test hands the capture thread the host's frames and
+// waits until it has converted and queued them, so the drift test runs both
+// clocks itself, as fast as the machine allows and the same every time.
+static std::atomic<bool> paced {false};
+static std::mutex pace_lock;
+static std::condition_variable pace_change;
+static unsigned pace_frames = 0; // Handed over, not yet read
+static bool pace_idle = false;   // The capture thread is back for more: all it read is in the ring
 
 extern "C" int __wrap_snd_card_next(int* card) { *card = *card < 0 && gadget ? 0 : -1; return 0; }
 extern "C" int __wrap_snd_ctl_open(snd_ctl_t** ctl, const char* name, int) {
@@ -57,17 +71,30 @@ extern "C" int __wrap_snd_pcm_hw_params_get_channels_min(const snd_pcm_hw_params
     if (result >= 0 && gadget_channels) *value = gadget_channels; // The gadget offers exactly its mask's channels.
     return result;
 }
-extern "C" int __wrap_snd_pcm_wait(snd_pcm_t*, int) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); return 1; }
+extern "C" int __wrap_snd_pcm_wait(snd_pcm_t*, int) {
+    if (!paced) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return 1;
+}
 // Host audio: left 0.5, right -0.5, as S32_LE (the first format offered).
 extern "C" snd_pcm_sframes_t __wrap_snd_pcm_readi(snd_pcm_t*, void* buffer, snd_pcm_uframes_t frames) {
     ++reads;
+    if (paced) {
+        std::unique_lock<std::mutex> lock(pace_lock);
+        pace_idle = true; pace_change.notify_all();
+        if (!pace_change.wait_for(lock, std::chrono::milliseconds(10), [] { return pace_frames > 0; })) return -EAGAIN;
+        pace_idle = false;
+        frames = std::min<snd_pcm_uframes_t>(frames, pace_frames);
+        pace_frames -= unsigned(frames);
+    }
     auto* samples = static_cast<int32_t*>(buffer);
     for (snd_pcm_uframes_t n = 0; n < frames; ++n) { samples[2 * n] = 0x40000000; samples[2 * n + 1] = int32_t(0xc0000000u); }
     return snd_pcm_sframes_t(frames);
 }
 // What the host records. The MPC plays left 0.5, right -0.5: every frame is
-// silence while the ring primes, that exact signal, or a ramp between the two.
-// With 18 channels, stem s plays (s + 1) / 32 after them.
+// silence while the ring primes, that signal (to float precision), or the
+// converter's band-limited step between the two, which rings a little past
+// both. With 18 channels, stem s plays (s + 1) / 32 after them.
+static bool near_s32(int32_t sample, double value) { return std::abs(sample - value * 2147483648.0) < 1024; }
 extern "C" snd_pcm_sframes_t __wrap_snd_pcm_writei(snd_pcm_t*, const void* buffer, snd_pcm_uframes_t frames) {
     ++writes;
     unsigned stride = gadget_channels ? gadget_channels.load() : 2;
@@ -75,13 +102,13 @@ extern "C" snd_pcm_sframes_t __wrap_snd_pcm_writei(snd_pcm_t*, const void* buffe
     for (snd_pcm_uframes_t n = 0; n < frames; ++n) {
         const int32_t* frame = samples + stride * n;
         int32_t left = frame[0], right = frame[1];
-        if (left == 0x40000000 && right == int32_t(0xc0000000u)) {
+        if (near_s32(left, 0.5) && near_s32(right, -0.5)) {
             ++signal_frames;
             bool stems = stride > 2;
-            for (unsigned s = 0; s + 2 < stride; ++s) stems = stems && frame[2 + s] == int32_t((s + 1) * (0x80000000u / 32));
+            for (unsigned s = 0; s + 2 < stride; ++s) stems = stems && near_s32(frame[2 + s], (s + 1) / 32.0);
             if (stems) ++stem_frames;
         }
-        else if (left < 0 || left > 0x40000000 || std::abs(int64_t(left) + right) > 1) ++wrong_frames;
+        else if (left < -0x10000000 || left > 0x58000000 || std::abs(int64_t(left) + right) > 1) ++wrong_frames;
     }
     return snd_pcm_sframes_t(frames);
 }
@@ -115,7 +142,7 @@ static void input() {
     assert(usb.rate() == 48000 && usb.channels() == 2 && usb.bits() == 32 && pcm_opens == 1 && playback_opens == 0);
     auto input = usb.stats();
     assert(input.state == UsbStreamState::Running && input.rate == 48000 && input.channels == 2 && input.bits == 32);
-    assert(input.opens == 1 && input.trim_ppm == 0);
+    assert(input.opens == 1 && usb.json().find("\"trim_ppm\":") != std::string::npos);
     { std::lock_guard<std::mutex> lock(name_lock); assert(opened == "hw:CARD=UAC2Gadget,DEV=0"); }
     wait_for([&] { return usb.pull(frames.data(), 128); });
     for (unsigned n = 0; n < 128; ++n) assert(std::abs(frames[2 * n] - 0.5f) < 1e-6f && std::abs(frames[2 * n + 1] + 0.5f) < 1e-6f);
@@ -203,7 +230,142 @@ static void output() {
     gadget_channels = 0; playback_rate = 0;
 }
 
+// Hands the capture thread `frames` of host audio and waits until they are
+// converted and in the ring.
+static void deliver(unsigned frames) {
+    std::unique_lock<std::mutex> lock(pace_lock);
+    pace_frames += frames; pace_idle = false;
+    pace_change.notify_all();
+    pace_change.wait(lock, [] { return pace_frames == 0 && pace_idle; });
+}
+
+// Two minutes of a host whose clock runs `ppm` fast (slow below 0) against
+// the device's 44.1 kHz, a period at a time, read by an audio thread taking
+// 128 frames as each falls due. Untrimmed, +1500 ppm fills the ring by 66
+// frames a second until it overflows after about 105 s, and -1000 ppm drains
+// it in 17 s and then re-primes every 17 s. Trimmed, the ring never runs dry
+// or overflows, and over the second minute the trim averages the drift and
+// the fill stays near 1,024 + ppm / 2 frames (as the capture thread pushes;
+// a period less once the audio thread has taken its share). Each 250 ms trim
+// wanders by up to ±150 ppm, as the audio thread's 128-frame reads beat
+// against the pushes: well under a cent, and the average is what matters.
+static void input_drift(double ppm) {
+    UsbAudioInput usb;
+    gadget = true; rate = 44100; paced = true;
+    usb.start("auto");
+    wait_for([&] { return usb.state() == UsbStreamState::Running; });
+    const double speed = 1 + ppm * 1e-6;
+    std::array<float, 2 * 128> block {};
+    double owed = 0, trims = 0; // Device frames due to the audio thread; the second minute's trims added up
+    unsigned low = ~0u, high = 0, samples = 0;
+    for (double host = 0; host < 120 * 44100 * speed; host += 256) {
+        deliver(256);
+        owed += 256 / speed;
+        for (; owed >= 128; owed -= 128) usb.pull(block.data(), 128);
+        if (host > 60 * 44100 * speed) {
+            auto now = usb.stats();
+            low = std::min(low, now.buffered); high = std::max(high, now.buffered);
+            trims += now.trim_ppm; ++samples;
+            assert(std::abs(now.trim_ppm - ppm) < 150);
+        }
+    }
+    auto settled = usb.stats();
+    usb.stop();
+    paced = false; rate = 0;
+    double trim = trims / samples, target = 1024 + ppm / 2;
+    std::printf("drift %+.0f ppm: trim %+.1f ppm on average, fill %u..%u (target %.0f), overflows %u, underruns %u\n", ppm,
+                trim, low, high, target, settled.overflows, settled.underruns);
+    assert(settled.overflows == 0 && settled.underruns == 0);
+    assert(std::abs(trim - ppm) < 10);
+    assert(low > target - 450 && high < target + 150);
+}
+
+// A least-squares fit of a cos + b sin + c, `step` radians a sample: the
+// tone's amplitude and the rms of everything else.
+struct Tone { double amplitude, residual; };
+static Tone fit_tone(const float* samples, size_t count, double step) {
+    double m[3][4] {};
+    for (size_t n = 0; n < count; ++n) {
+        const double basis[3] {std::cos(step * n), std::sin(step * n), 1.0};
+        for (unsigned r = 0; r < 3; ++r) {
+            for (unsigned c = 0; c < 3; ++c) m[r][c] += basis[r] * basis[c];
+            m[r][3] += basis[r] * samples[n];
+        }
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        for (unsigned k = i + 1; k < 3; ++k) {
+            double f = m[k][i] / m[i][i];
+            for (unsigned j = i; j < 4; ++j) m[k][j] -= f * m[i][j];
+        }
+    double v[3];
+    for (int i = 2; i >= 0; --i) {
+        v[i] = m[i][3];
+        for (int j = i + 1; j < 3; ++j) v[i] -= m[i][j] * v[j];
+        v[i] /= m[i][i];
+    }
+    double error = 0;
+    for (size_t n = 0; n < count; ++n) {
+        double left = samples[n] - (v[0] * std::cos(step * n) + v[1] * std::sin(step * n) + v[2]);
+        error += left * left;
+    }
+    return {std::hypot(v[0], v[1]), std::sqrt(error / count)};
+}
+
+static double db(double ratio) { return 20 * std::log10(ratio); }
+constexpr double pi = 3.14159265358979323846;
+
+// Equal rates trimmed by 50 ppm, as the drift trim leaves them: each output
+// frame falls a little further between two input frames, sweeping through
+// every position each 0.45 s. A linear converter makes 15 kHz swing between
+// -0.4 and -6.3 dB, and 20 kHz down to -16 dB; this one holds both flat.
+static void flatness() {
+    for (double hz : {15000.0, 20000.0}) {
+        SincResampler<2> usb; usb.reset(44100, 44100); usb.trim(1 + 50e-6);
+        std::vector<float> out;
+        for (unsigned n = 0; n < 44100 * 33 / 10; ++n) {
+            float sample = float(0.5 * std::sin(2 * pi * hz * n / 44100));
+            usb.feed(sample, -sample, [&](float left, float right) { assert(left == -right); out.push_back(left); });
+        }
+        double low = 0, high = -100;
+        for (size_t start = 4410; start + 2205 <= out.size(); start += 2205) { // 3 s in 50 ms blocks
+            double level = db(fit_tone(out.data() + start, 2205, 2 * pi * hz * (1 + 50e-6) / 44100).amplitude / 0.5);
+            low = std::min(low, level); high = std::max(high, level);
+        }
+        std::printf("flatness %.0f Hz: %+.4f..%+.4f dB\n", hz, low, high);
+        assert(low > -0.01 && high < 0.01);
+    }
+}
+
+// 48 kHz from a computer down to 44.1 kHz, and 44.1 up to 48: whatever the
+// conversion folds or images back next to a tone is at least 90 dB under it.
+// A linear converter leaves 10 kHz at 48 -> 44.1 an alias 24 dB down at
+// 6.1 kHz, and 18 kHz one 13 dB down at 14.1 kHz.
+static void alias_rejection() {
+    const unsigned pairs[][2] {{48000, 44100}, {44100, 48000}};
+    for (auto& rates : pairs) {
+        double worst = -200, worst_hz = 0;
+        for (double hz : {1000.0, 6100.0, 10000.0, 14100.0, 18000.0, 19200.0, 20000.0}) {
+            SincResampler<2> usb; usb.reset(rates[0], rates[1]);
+            std::vector<float> out;
+            for (unsigned n = 0; n < rates[0] * 3 / 4; ++n) {
+                float sample = float(0.5 * std::sin(2 * pi * hz * n / rates[0]));
+                usb.feed(sample, sample, [&](float left, float) { out.push_back(left); });
+            }
+            Tone tone = fit_tone(out.data() + rates[1] / 10, rates[1] / 2, 2 * pi * hz / rates[1]);
+            double aliases = db(tone.residual / (0.5 / std::sqrt(2.0)));
+            assert(std::abs(db(tone.amplitude / 0.5)) < 0.01 && aliases < -90);
+            if (aliases > worst) { worst = aliases; worst_hz = hz; }
+        }
+        std::printf("aliases %u -> %u: %.1f dB at worst (%.0f Hz)\n", rates[0], rates[1], worst, worst_hz);
+    }
+}
+
 int main() {
+    std::setvbuf(stdout, nullptr, _IOLBF, 1024); // Each measurement shows even if an assertion then fails.
     input();
     output();
+    input_drift(1500);
+    input_drift(-1000);
+    flatness();
+    alias_rejection();
 }

@@ -19,7 +19,10 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   S16_LE, S24_3LE and S32_LE decoding and rounded, clipped encoding,
   44.1/48/32 kHz linear rate conversion both ways, a trimmed conversion
   without a jump, the drift trim's gain and limits and a simulated 150 ppm
-  drift settling 75 frames above target, ring priming, underrun re-priming, overflow and flush, takes
+  drift settling 75 frames above target; the USB converter passing equal
+  rates bit for bit 32 frames late, 44.1/48/96 kHz frame counts with and
+  without a trim, DC exact from the first frame, a trim without a jump and
+  18 channels that never leak into each other; ring priming, underrun re-priming, overflow and flush, takes
   refused without an input, record/finish/play/stop, playback mixing,
   route-change and full-buffer endings and stale overview peaks.
 - A fake `UAC2_Gadget` card in front of ALSA's null PCM verifies discovery by
@@ -27,10 +30,20 @@ with reusable hardware interfaces and a built-in sine/triangle demo synth.
   the host's rate, conversion into the audio ring, reopening on a rate change
   and closing when the host stops. The same fake card checks the output
   thread: nothing opened or buffered while `Playback Rate` is 0, opening the
-  playback PCM at the host's rate, every written frame silent, exact or a
-  symmetric ramp between them, reopening on a rate change, closing when the
-  host stops, nothing buffered after `stop()`, and a named PCM without a
-  rate control opening at 44.1 kHz. The headless app test drives
+  playback PCM at the host's rate, every written frame silent, the signal to
+  float precision or a symmetric band-limited step between them, reopening
+  on a rate change, closing when the host stops, nothing buffered after
+  `stop()`, and a named PCM without a rate control opening at 44.1 kHz. The
+  input then runs two simulated minutes each against a host clock 1,500 ppm
+  fast and 1,000 ppm slow, handed over a period at a time: no underrun or
+  overflow (untrimmed, the first overflows after about 105 s and the second
+  runs dry every 17 s), the trim averaging the drift within 10 ppm and the
+  fill staying near 1,024 + ppm / 2 frames. The converter alone keeps 15 and
+  20 kHz within 0.01 dB for 3 s at equal rates trimmed by 50 ppm (measured
+  ±0.0001 dB; linear interpolation swings 15 kHz from −0.4 to −6.3 dB), and
+  tones from 1 to 20 kHz converted 48 to 44.1 kHz and back within 0.01 dB
+  with everything else at least 90 dB under them (measured −100.6 and
+  −93.8 dB at worst). The headless app test drives
   `usb-output`, `usb-output off|on` and `usb_output` in `status`; the
   starter runs with `--usb-output off`. The headless app test drives `source`,
   `channels`, `transport`, `page` and `recorder`, including a USB-C selection

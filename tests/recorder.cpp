@@ -98,6 +98,61 @@ static void resampling() {
     }
 }
 
+// The USB converter (its flatness and alias rejection are in usb_audio.cpp).
+static void sinc_resampling() {
+    // Equal rates and no trim: every frame bit for bit, 32 frames late.
+    SincResampler<2> same; same.reset(44100, 44100);
+    std::vector<float> out;
+    for (int n = 0; n < 1000; ++n) same.feed(std::sin(0.37f * n), float(-n), [&](float l, float r) { out.push_back(l); out.push_back(r); });
+    assert(out.size() == 2 * (1000 - 32));
+    for (unsigned n = 0; n < out.size() / 2; ++n) assert(out[2 * n] == std::sin(0.37f * n) && out[2 * n + 1] == -float(n));
+
+    // A second at one rate makes a second at the other, less the kernel's
+    // half width (35 frames converting 48 kHz down, 32 otherwise); a constant
+    // passes from the very first frame, each channel on its own.
+    auto convert = [](unsigned from, unsigned to, double trim) {
+        SincResampler<2> usb; usb.reset(from, to); usb.trim(trim);
+        unsigned count = 0;
+        for (unsigned n = 0; n < from; ++n) usb.feed(0.5f, -0.25f, [&](float l, float r) { assert(near(l, 0.5f) && near(r, -0.25f)); ++count; });
+        return count;
+    };
+    auto expected = [](unsigned from, unsigned to, unsigned half, double trim) { return unsigned(std::ceil((from - half) / (trim * from / to))); };
+    assert(convert(48000, 44100, 1) == expected(48000, 44100, 35, 1));
+    assert(convert(44100, 48000, 1) == expected(44100, 48000, 32, 1));
+    assert(convert(96000, 44100, 1) == expected(96000, 44100, 70, 1));
+    assert(convert(44100, 48000, 1.001) == expected(44100, 48000, 32, 1.001)); // Reads input 0.1 % faster.
+
+    // trim() changes the ratio from the next frame without a jump: a 100 Hz
+    // sine never moves further between frames than its steepest slope allows.
+    constexpr double pi = 3.14159265358979323846;
+    SincResampler<2> swung; swung.reset(44100, 48000);
+    std::vector<float> values;
+    for (int n = 0; n < 30000; ++n) {
+        if (n == 10000) swung.trim(0.998);
+        if (n == 20000) swung.trim(1.002);
+        float sample = float(0.5 * std::sin(2 * pi * 100 * n / 44100));
+        swung.feed(sample, sample, [&](float l, float) { values.push_back(l); });
+    }
+    // Per output frame at the faster trim; from frame 100, as the held first
+    // frame meeting the sine at its steepest rings a few per cent over it.
+    const double steepest = 0.5 * 2 * pi * 100 / 48000 * 1.002;
+    for (size_t n = 100; n < values.size(); ++n) assert(std::abs(values[n] - values[n - 1]) < steepest * 1.001);
+
+    // Eighteen channels, as the USB output carries: none leaks into another.
+    SincResampler<18> wide; wide.reset(44100, 48000);
+    std::array<float, 18> frame;
+    for (unsigned c = 0; c < 18; ++c) frame[c] = float(c + 1) / 32;
+    unsigned frames = 0;
+    for (int n = 0; n < 2000; ++n) {
+        if (n == 1000) frame[5] = -1; // A step on one channel only
+        wide.feed(frame.data(), [&](const float* converted) {
+            for (unsigned c = 0; c < 18; ++c) if (c != 5) assert(near(converted[c], float(c + 1) / 32));
+            ++frames;
+        });
+    }
+    assert(frames > 2000);
+}
+
 static void drift() {
     assert(drift_trim(1024, 1024) == 1.0);
     assert(drift_trim(1074, 1024) > 1.0 && std::abs(drift_trim(1074, 1024) - 1.0001) < 1e-9); // 50 frames: 100 ppm.
@@ -205,6 +260,7 @@ int main() {
     channel_selection();
     sample_formats();
     resampling();
+    sinc_resampling();
     drift();
     ring();
     recorder();

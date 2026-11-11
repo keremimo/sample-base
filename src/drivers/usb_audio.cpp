@@ -111,20 +111,22 @@ void UsbAudioInput::stop() {
     running.store(false);
     if (thread.joinable()) thread.join();
     set_state(UsbStreamState::Stopped);
-    stream_rate.store(0); stream_channels.store(0); stream_width.store(0);
+    stream_rate.store(0); stream_channels.store(0); stream_width.store(0); trim_ppm.store(0);
 }
 
 void UsbAudioInput::run(std::string requested) {
     raise_priority();
     Stream capture;
-    LinearResampler resampler;
+    SincResampler<2> resampler;
     std::vector<uint8_t> raw;
     std::vector<float> converted;
     long open_rate = 0;
     unsigned open_device = 0;
+    // The ring's fill after each push since the last trim, and the computer's frames meanwhile.
+    double fill_sum = 0; unsigned fill_count = 0, trim_frames = 0;
     auto close = [&] {
         if (capture.pcm) { snd_pcm_drop(capture.pcm); snd_pcm_close(capture.pcm); capture.pcm = nullptr; }
-        stream_rate.store(0); stream_channels.store(0); stream_width.store(0);
+        stream_rate.store(0); stream_channels.store(0); stream_width.store(0); trim_ppm.store(0);
     };
     auto next_check = Clock::now();
     while (running.load()) {
@@ -144,6 +146,7 @@ void UsbAudioInput::run(std::string requested) {
                     open_rate = target.rate; open_device = output_rate; ++opens;
                     raw.assign(capture.period * capture.channels * capture.width, 0);
                     resampler.reset(capture.rate, output_rate);
+                    fill_sum = 0; fill_count = 0; trim_frames = 0;
                     ring.flush();
                     stream_rate.store(capture.rate); stream_channels.store(capture.channels); stream_width.store(capture.width);
                     set_state(UsbStreamState::Running);
@@ -170,12 +173,22 @@ void UsbAudioInput::run(std::string requested) {
             resampler.feed(left, right, [&](float l, float r) { converted.push_back(l); converted.push_back(r); });
         }
         ring.push(converted.data(), unsigned(converted.size() / 2));
+        // Every 250 ms of the computer's audio, counted in its frames, the
+        // ring's average fill meanwhile trims the conversion.
+        fill_sum += ring.buffered(); ++fill_count; trim_frames += unsigned(count);
+        if (trim_frames >= capture.rate / 4) {
+            double factor = drift_trim(fill_sum / fill_count, prime_frames);
+            resampler.trim(factor);
+            trim_ppm.store(int(std::lround((factor - 1.0) * 1e6)));
+            fill_sum = 0; fill_count = 0; trim_frames = 0;
+        }
     }
     close();
 }
 
 UsbStreamStats UsbAudioInput::stats() const {
-    return {state(), rate(), channels(), bits(), ring.buffered(), ring.overflows.load(), ring.underruns.load(), xruns.load(), opens.load(), 0};
+    return {state(), rate(), channels(), bits(), ring.buffered(), ring.overflows.load(), ring.underruns.load(), xruns.load(),
+            opens.load(), trim_ppm.load()};
 }
 
 std::string UsbAudioInput::json() const {
@@ -185,7 +198,7 @@ std::string UsbAudioInput::json() const {
     std::ostringstream out;
     out << "{\"state\":" << json_string(usb_stream_state_names[size_t(now.state)]) << ",\"device\":" << json_string(device)
         << ",\"rate\":" << now.rate << ",\"channels\":" << now.channels << ",\"bits\":" << now.bits
-        << ",\"buffered\":" << now.buffered << ",\"overflows\":" << now.overflows
+        << ",\"buffered\":" << now.buffered << ",\"trim_ppm\":" << now.trim_ppm << ",\"overflows\":" << now.overflows
         << ",\"underruns\":" << now.underruns << ",\"xruns\":" << now.xruns << ",\"opens\":" << now.opens << '}';
     return out.str();
 }
@@ -233,7 +246,7 @@ void UsbAudioOutput::run(std::string requested) {
     raise_priority();
     constexpr unsigned chunk_frames = 32;
     Stream playback;
-    FrameResampler<channels> resampler;
+    SincResampler<channels> resampler; // 38 KB of history: fine on this thread's stack
     std::vector<uint8_t> raw;
     std::vector<float> staged; // Converted frames not yet encoded, `channels` samples each.
     std::array<float, channels * chunk_frames> chunk;

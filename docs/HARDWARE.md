@@ -49,7 +49,7 @@ The kernel sources remain under their own upstream licences.
 | Surface inputs and outputs | UART3, 4,000,000 baud, `Control Surface` raw MIDI | `HardwareMidi` receives all channel, pressure, system-common, realtime and bounded SysEx messages; queues complete outbound messages |
 | External MIDI | UART5, 31,250 baud, `External MIDI` raw MIDI | The same discovered bidirectional MIDI interface; incoming channel messages play the demo synth at their native MIDI pitches |
 | USB host MIDI | Kernel USB audio/MIDI driver | Input/output subdevices are discovered and reopened after hotplug; disconnect and read failure panic the demo synth |
-| USB audio | Kernel ALSA PCM devices; USB-C device audio from the `UAC2_Gadget` card (`CONFIG_USB_CONFIGFS_F_UAC2`) | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; `UsbAudioInput` finds the gadget by driver name, waits for the host and delivers its capture stream at 44.1 kHz; `UsbAudioOutput` sends every app's output, and its stems, to a computer recording from the gadget; no fixed USB card number is assumed |
+| USB audio | Kernel ALSA PCM devices; USB-C device audio from the `UAC2_Gadget` card (`CONFIG_USB_CONFIGFS_F_UAC2`) | Enumerated PCM endpoints can be selected with `--audio-output` and `--audio-input`; `UsbAudioInput` finds the gadget by driver name, waits for the host and delivers its capture stream at the device's rate, trimmed against clock drift; `UsbAudioOutput` sends every app's output, and its stems, to a computer recording from the gadget; no fixed USB card number is assumed |
 | Display | SPI3 ST7796S-compatible panel, 320 × 240, rotation 270, SPI at 25 MHz; no vsync (the mode has no refresh rate, no tearing-effect line) | `Display` finds the connected panel across DRM cards and pushes JUCE software images from a worker thread, sending only the changed rows and columns as damage clips: a whole screen takes about 54 ms, small changes under 5 ms. It attempts to restore the previous CRTC on release |
 | Backlight | PWM4, seven brightness indices, maximum index 6 | `Platform` discovers the actual sysfs range, validates explicit changes and restores its original brightness on normal exit |
 | Power | `mains-power`, ADC supply voltage, kernel power handling | `Platform` reads actual power-supply attributes; `SystemServices` observes logind sleep/shutdown notifications and requests a clean app exit |
@@ -268,8 +268,8 @@ control `Playback Rate` reads 0 until the computer starts recording.
 | Waiting | Every 250 ms the output thread looks for the gadget and reads `Playback Rate`. While it is 0 nothing is opened, and `push()` drops blocks rather than queueing audio for a recording that has not started. |
 | Opening | At the computer's rate: 256-frame periods, a four-period buffer (23 ms at 44.1 kHz), started once the first full buffer is written. A rate change reopens; the rate returning to 0 closes. |
 | Hand-off | The audio thread converts each block to float and pushes it into an 8,192-frame lock-free ring. The output thread primes it to 1,024 frames (23 ms), sending silence until then and again if it runs dry. |
-| Conversion | Linear interpolation from 44.1 kHz to the computer's rate, the converter the USB-C input uses in the other direction, then encoding to the gadget's sample format. |
-| Drift | The AK4558's clock and the computer's USB clock differ by tens of parts per million, enough to empty or fill the ring within minutes. Every 250 ms the ring's average fill sets a trim on the conversion (`drift_trim()` in [src/dsp/frame_ring.h](../src/dsp/frame_ring.h)): 2 ppm per frame away from 1,024, at most ±0.2 %, settling in about 11 seconds. A 100 ppm drift settles 50 frames above the target; against a Mac it settled between −15 and −48 ppm. |
+| Conversion | From the device's rate to the computer's with the band-limited converter the USB-C input uses in the other direction (Rate conversion, below), then encoding to the gadget's sample format. |
+| Drift | The AK4558's clock and the computer's USB clock differ by tens of parts per million, enough to empty or fill the ring within minutes. Every 250 ms the ring's average fill sets a trim on the conversion (`drift_trim()` in [src/dsp/frame_ring.h](../src/dsp/frame_ring.h)): 2 ppm per frame away from 1,024, at most ±0.2 %, settling in about 11 seconds. A 100 ppm drift settles 50 frames above the target; against a Mac it settled between −15 and −48 ppm. The USB-C input trims its own conversion the same way. |
 | Faults | A playback underrun (the thread was starved) re-prepares the stream and counts in `xruns`. Any other error closes it until the next check. |
 
 ### Stems
@@ -321,11 +321,40 @@ frames buffered, the current trim in ppm, ring overflows and underruns, PCM
 xruns and opens. `usb-output on` restarts with the `--usb-output` PCM, or the
 gadget when that was `off`. `status` reports `usb_output=STATE`.
 
-Linear interpolation slightly dulls the top octave and leaves faint images
-above it. That is fine for recording ideas and monitoring, not for
-mastering. From the buffer sizes, audio reaches the computer about 45 ms after the jacks. If the
+From the buffer sizes, audio reaches the computer about 45 ms after the jacks. If the
 computer plays its input straight back to the MPC while an app monitors
 USB-C input, the audio loops; the demos never monitor USB-C input.
+
+### Rate conversion
+
+Both USB-C directions convert with `SincResampler`
+([src/dsp/frame_ring.h](../src/dsp/frame_ring.h)): each output frame is the
+input under a Kaiser-windowed sinc (β 9.2, 32 zero crossings a side, read
+from a shared 68 KB table of 256 points a crossing with linear interpolation
+between them) centred on its position. Everything up to 0.907 of the lower
+rate's Nyquist frequency, 20 kHz at 44.1 kHz and 21.8 kHz at 48, passes flat
+to ±0.0002 dB, and what the conversion folds or images back below that edge
+stays at least 90 dB under the signal (91.8 dB at worst, near 19.9 kHz), for
+any pair of 44.1, 48 and 96 kHz and wherever between two input frames the
+drift trim puts the read position. As in dedicated asynchronous rate
+converters, the −6 dB point is the lower Nyquist frequency, so the only
+content left partly folded lies between 20 and 24.1 kHz at 44.1 kHz and
+folds to above 20 kHz. Converting
+down, the kernel stretches over more input frames (35 a side for 48 to
+44.1 kHz, 70 for 96 to 44.1) so that the band follows the output's rate.
+Each output frame is divided by its weights' sum, so DC passes exactly, and
+at equal rates with no trim every frame passes bit for bit, 32 frames
+(0.7 ms) late.
+
+The linear interpolation it replaces lost up to cos(π f / rate) as the trim
+swept its read position between frames: at a 50 ppm trim, 15 kHz swung
+between −0.4 and −6.3 dB every 0.45 s and 20 kHz fell to −16 dB, and from
+48 to 44.1 kHz a 10 kHz tone left an alias 24 dB down at 6.1 kHz. It stays
+in frame_ring.h as `LinearResampler` for code that converts on the audio
+thread. On the build machine (Apple M-series, arm64) the sinc converter
+takes 0.6 % of a core for the 18-channel output at 44.1 kHz and 1.6 % from
+96 to 44.1 kHz; the MPC's Cortex-A55 cores are several times slower, not
+yet measured.
 
 ## SD card access
 
@@ -446,12 +475,23 @@ offers exactly one sample format, S16_LE, S24_3LE or S32_LE, set by the gadget's
 the host chose; the PCM-interface control `Capture Rate` reports it and reads 0
 while the host is not streaming. `UsbAudioInput` therefore opens nothing until
 that control is non-zero, reopens when it changes, closes when it returns to 0,
-and converts the first two channels to 44.1 kHz stereo float with linear
-interpolation on its own thread. An 8,192-frame lock-free ring hands the result
+and converts the first two channels to stereo float at the device's rate on
+its own thread, with the output's band-limited converter (USB-C audio
+output, Rate conversion). An 8,192-frame lock-free ring hands the result
 to the audio thread, which waits for 1,024 frames before using it and again
-after running dry. The host and the AK4558 have independent clocks; the ring
-absorbs drift, and a long session may hear an occasional re-prime. The
-gadget's `Capture Pitch 1000000` feedback control is left alone. Whether the
+after running dry. The host and the AK4558 have independent clocks, so after
+every 250 ms of the host's audio, counted in its frames, the ring's average
+fill since the last time trims the conversion through the output's
+`drift_trim()`: a ring above 1,024 frames is fed slower, one below it
+faster, settling ppm / 2 frames off 1,024 within about 11 seconds.
+Untrimmed, a host 15 to 48 ppm slow (the drift the output measured against a
+Mac) would empty the ring every 26 to 8 minutes, each time a 23 ms
+re-prime, and a host as fast would fill it over about an hour, latency
+creeping from 23 to 186 ms until every overflow dropped frames with a
+click. `UsbAudioInput`
+reports the trim as `trim_ppm` (in the recorder state's `usb`). The
+gadget's `Capture Pitch 1000000` feedback control, which could make the host
+follow the AK4558 instead, is still left alone. Whether the
 1.3.0.12 gadget configuration includes the UAC2 function at all is not in the
 public source; without the card the screen says so and USB-C records silence.
 `--usb-input NAME` reads another ALSA capture PCM instead of discovering the

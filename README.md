@@ -255,14 +255,15 @@ hooks, their threads and how to wire in an app.
   callback. Line in and Mic come from the I2S capture pair through the
   existing exclusive `TRS` / `Builtin Microphone` route switch. USB-C input
   ([src/drivers/usb_audio.cpp](src/drivers/usb_audio.cpp)) reads the kernel's UAC2 gadget
-  capture PCM on its own thread, converts the host's rate to 44.1 kHz and
+  capture PCM on its own thread, converts the host's rate to the device's and
   crosses into the audio thread through a lock-free ring.
 - **USB-C output** (the same driver) sends whatever the app plays to a
   computer recording from the MPC: the runtime hands every rendered block to
   another ring, and a thread converts it to the computer's rate, 44.1 kHz on
-  1.3.0.12, and writes the gadget's playback PCM. A slow trim of that
-  conversion follows the clock drift between the two, so long recordings
-  stay continuous. The runtime widens the gadget to 18 channels so an app
+  1.3.0.12, and writes the gadget's playback PCM. Both ways the conversion is
+  a band-limited windowed sinc, flat to 20 kHz with images and aliases at
+  least 90 dB down, and a slow trim of it follows the clock drift between
+  the two, so long sessions stay continuous. The runtime widens the gadget to 18 channels so an app
   can send 16 mono track stems after the main mix
   ([src/drivers/usb_gadget.h](src/drivers/usb_gadget.h)).
 - Fonts come from the MPC's existing Liberation Sans installation.

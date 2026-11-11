@@ -67,15 +67,16 @@ class RuntimeTests(unittest.TestCase):
                                    "-Wl,--wrap=snd_pcm_wait", "-Wl,--wrap=snd_pcm_prepare", "-Wl,--wrap=snd_pcm_start"))
             subprocess.run([str(binary)], check=True, timeout=10)
 
-    def test_usb_gadget_both_ways_discovery_rate_changes_and_conversion(self):
+    def test_usb_gadget_both_ways_discovery_rate_changes_drift_and_conversion(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "usb-audio"
             symbols = ("snd_card_next", "snd_ctl_open", "snd_ctl_close", "snd_ctl_card_info", "snd_ctl_card_info_get_driver",
                        "snd_ctl_card_info_get_id", "snd_ctl_elem_read", "snd_pcm_open", "snd_pcm_close", "snd_pcm_wait",
                        "snd_pcm_readi", "snd_pcm_writei", "snd_pcm_hw_params_get_channels_min")
+            # Optimised: the drift test converts four minutes of host audio.
             compile_fixture(binary, "tests/usb_audio.cpp", "src/drivers/usb_audio.cpp", "src/drivers/platform.cpp",
-                            extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
-            subprocess.run([str(binary)], check=True, timeout=20)
+                            extra=("-O2", "-lasound", *("-Wl,--wrap=" + name for name in symbols)))
+            subprocess.run([str(binary)], check=True, timeout=60)
 
     def test_usb_gadget_widened_for_stems(self):
         with tempfile.TemporaryDirectory() as temp:

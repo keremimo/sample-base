@@ -22,9 +22,10 @@
 // (drivers/usb_gadget.h) gives the computer-bound side room for stems.
 //
 // The computer's USB clock and the AK4558's drift apart, so each
-// direction runs its own thread with a FrameRing to the audio thread. Neither
-// opens anything until the computer streams, and neither touches the gadget's
-// pitch or feedback controls.
+// direction runs its own thread with a FrameRing to the audio thread and a
+// SincResampler that drift_trim() nudges to keep that ring near
+// `prime_frames`. Neither opens anything until the computer streams, and
+// neither touches the gadget's pitch or feedback controls.
 
 struct Uac2Gadget { std::string pcm, control; };
 // The first UAC2 gadget card, or empty names without one.
@@ -37,8 +38,9 @@ enum class UsbStreamState : uint8_t { Stopped, Missing, Waiting, Running, Failed
 constexpr std::array<const char*, size_t(UsbStreamState::Count)> usb_stream_state_names {{"stopped", "missing", "waiting", "running", "failed"}};
 
 // One direction's counters, as json() reports them. Any thread may read
-// them: every field comes from an atomic. `trim_ppm` is the output's drift
-// trim and 0 for the input.
+// them: every field comes from an atomic. `trim_ppm` is the direction's drift
+// trim: how much faster than the two rates' ratio its converter reads input,
+// in parts per million.
 struct UsbStreamStats {
     UsbStreamState state = UsbStreamState::Stopped;
     unsigned rate = 0, channels = 0, bits = 0, buffered = 0, overflows = 0, underruns = 0, xruns = 0, opens = 0;
@@ -48,8 +50,11 @@ struct UsbStreamStats {
 // What a computer plays to the MPC. start() opens nothing on the calling
 // thread: a separate thread finds the gadget, waits for the computer,
 // converts its stream to the audio device's rate, stereo float and hands it to the audio
-// thread. The ring re-primes when it runs dry. Nothing is opened unless an
-// application selects USB input.
+// thread. After every 250 ms of the computer's audio, drift_trim() nudges
+// that conversion by the ring's average fill meanwhile, so the ring settles
+// near `prime_frames` instead of running dry or filling up as the two clocks
+// drift apart. Should it run dry all the same, it re-primes. Nothing is
+// opened unless an application selects USB input.
 class UsbAudioInput {
 public:
     static constexpr unsigned ring_frames = 8192, prime_frames = 1024;
@@ -84,6 +89,7 @@ private:
     std::atomic<bool> running {false};
     std::atomic<uint8_t> current {uint8_t(UsbStreamState::Stopped)};
     std::atomic<unsigned> stream_rate {0}, stream_channels {0}, stream_width {0}, xruns {0}, opens {0};
+    std::atomic<int> trim_ppm {0};
     std::atomic<unsigned> device_rate {44100};
     mutable std::mutex device_lock; // Guards `device_name`; never taken by the audio thread.
     std::string device_name;
@@ -98,7 +104,7 @@ struct UsbStems { float track[usb_stem_count][usb_stem_frames]; };
 // push(), which the runtime does with every block an app renders, so the
 // computer hears what the jacks play, after the app's own volume. A separate
 // thread finds the gadget, waits for the computer to start recording, then
-// converts 44.1 kHz to the computer's rate and writes it. drift_trim() keeps
+// converts the device's rate to the computer's and writes it. drift_trim() keeps
 // the ring near `prime_frames` by nudging that conversion, so a long
 // recording neither runs dry nor overflows. Silence goes out while the ring
 // primes. push() drops everything while nothing is streaming.
