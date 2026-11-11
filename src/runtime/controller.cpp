@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <pthread.h>
+#include <sched.h>
 #include <thread>
 #include <utility>
 
@@ -94,6 +96,13 @@ void Controller::poll_platform(Session& session) {
 }
 
 void Controller::run_midi(Session& session) {
+    // A low real-time priority, under the audio thread's 30 and the 20 of the
+    // USB audio thread (and of an app's disk streaming): a pad or a MIDI
+    // message is read the moment it arrives, not when the scheduler gets round
+    // to it. The loop sleeps in poll between passes, so it starves nothing.
+    // Best effort, as the audio thread's.
+    sched_param priority {}; priority.sched_priority = 15;
+    if (int error = pthread_setschedparam(pthread_self(), SCHED_FIFO, &priority)) std::cerr << "MIDI priority unavailable: " << error << '\n';
     try {
         auto release = Clock::time_point::max(); // When the audition press ends.
         auto scan = Clock::now();                // Next MIDI port scan.

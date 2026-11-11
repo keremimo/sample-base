@@ -80,7 +80,9 @@ both rules.
 The runtime runs four threads at once and calls each hook from one of them.
 Hooks on different threads run at the same time, so they share state only
 through atomics, `MidiQueue` (single producer, single consumer) or a lock.
-`render()` must never allocate, block, lock or touch files.
+`render()` must never allocate, block, lock or touch files. The audio thread
+runs at `SCHED_FIFO` priority 30 and the MIDI thread at 15 (both best effort),
+so a pad is read the moment it arrives; keep MIDI hooks short.
 
 | Hook | Thread | When |
 | --- | --- | --- |
