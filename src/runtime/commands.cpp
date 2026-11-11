@@ -117,7 +117,7 @@ std::string Controller::mixer_set_command(const std::string& argument) {
 }
 
 // led pad 1-16 R G B | led fader R G B | led bank A-H on|off |
-// led button NAME off|dim|bright|red-dim|red-bright | led off
+// led button NAME off|dim|bright|red-dim|red-bright | led meter L|R 0-31 | led off
 // A light the app also drives changes back on its next frame.
 std::string Controller::led(const std::string& text) {
     std::istringstream fields(text); std::string target, name, extra;
@@ -128,7 +128,7 @@ std::string Controller::led(const std::string& text) {
         rgb = {uint8_t(r), uint8_t(g), uint8_t(b)}; return true;
     };
     auto done = [&](bool ok) { return ok && !(fields >> extra) ? "OK lights updated" : "ERR use led pad 1-16 R G B, led fader R G B, "
-        "led bank A-H on|off, led button NAME off|dim|bright|red-dim|red-bright or led off; colours are 0-127"; };
+        "led bank A-H on|off, led button NAME off|dim|bright|red-dim|red-bright, led meter L|R 0-31 or led off; colours are 0-127"; };
     Rgb rgb;
     if (target == "off") { lights.all_off(); return done(true); }
     if (target == "fader") return done(colour(rgb) && lights.fader(rgb));
@@ -138,6 +138,10 @@ std::string Controller::led(const std::string& text) {
         bool on = false, valid = name.size() == 1 && name[0] >= 'A' && name[0] <= 'H' && fields >> extra && (extra == "on" || extra == "off");
         on = extra == "on"; extra.clear();
         return done(valid && lights.bank(unsigned(name[0] - 'A'), on));
+    }
+    if (target == "meter") { // a mask of the strip's five LEDs, bit 0 the bottom one
+        unsigned lit = 0;
+        return done((name == "L" || name == "R") && fields >> lit && lit <= surface_meter_all && lights.meter(name == "R", uint8_t(lit)));
     }
     if (target != "button") return done(false);
     std::string level; fields >> level;

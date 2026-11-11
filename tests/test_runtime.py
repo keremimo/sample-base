@@ -149,11 +149,11 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(command("surface-sync").startswith("OK"))
                 for good in ("led pad 1 127 0 0", "led pad 16 0 0 127", "led fader 101 101 101", "led bank A on",
                              "led bank H off", "led button Stop bright", "led button sample-select red-dim",
-                             "led button 16levels red-bright", "led off"):
+                             "led button 16levels red-bright", "led meter L 31", "led meter R 3", "led off"):
                     self.assertTrue(command(good).startswith("OK"), good)
                 for bad in ("led pad 0 1 1 1", "led pad 17 1 1 1", "led pad 1 128 0 0", "led fader 1 2",
                             "led bank I on", "led bank A dim", "led button Shift dim", "led button Stop red-dim",
-                            "led button Nope dim", "led off now", "led"):
+                            "led button Nope dim", "led meter L 32", "led meter C 1", "led meter R", "led off now", "led"):
                     self.assertTrue(command(bad).startswith("ERR"), bad)
                 power = json.loads(command("power")[3:])
                 self.assertEqual((power["key"], power["presses"]), ("KEY_POWER", 0))

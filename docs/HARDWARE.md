@@ -674,12 +674,15 @@ whose colour matches, so every answer is recorded rather than remembered.
 | Pad bank A–H | Channel-1 CC 57–64 | 0 off; 20 and 127 both looked fully on, so the base sends 127 |
 | White/red buttons | Channel-1 CC = button note | 0 off, 1 dim white, 2 white, 3 dim red, 4 red with some white showing |
 | Pad Bank, Note Repeat, Stop (white), Sample Record, Seq Record (red), Play (green) | Channel-1 CC = button note | 0 off, 1 dim, 2 full; 3 and 4 also showed full |
+| Level meters right of the screen | Channel-1 CC 83 left strip, 84 right | A mask of the five LEDs (green, green, green, yellow, red from the bottom), bit 0 the bottom: 2 lit only the second, 3 the bottom two, 127 all |
 
 The white/red buttons are Sample, SEQ, Pad FX, Knob FX, Erase, Chop, Mute,
 Loop, 16 Levels, Sample Select and Tap Tempo. Shift, Minus, Plus, the three
-buttons above the screen and wheel Push have no light. Stock also clears CC
-83–86 at startup. No AC50 light is known for them and they were not probed,
-so the base does not send them.
+buttons above the screen and wheel Push have no light. Stock clears CC
+83–86 at startup; 83 and 84 are the meter strips (a chase of the four and
+then masks, read by eye on 2026-11-11). 85 and 86 lit nothing, so the base
+does not send them. The base draws no level on the meters itself; an app
+sets them with `SurfaceLights::meter()`.
 
 `SurfaceLights` keeps the requested state, which any thread may change, and
 the MIDI thread sends only the lights that changed, at most 48 messages per
@@ -688,8 +691,8 @@ startup leaves the stock app's last lights in place, apart from the four
 transport lights the demo's recorder sets and the light show. The control commands
 are `led pad 1-16 R G B`, `led fader R G B`, `led bank A-H on|off`,
 `led button NAME off|dim|bright|red-dim|red-bright` (names as in
-`src/surface/controls.h`, ignoring case and punctuation, so `tap-tempo` or `TapTempo`)
-and `led off`.
+`src/surface/controls.h`, ignoring case and punctuation, so `tap-tempo` or `TapTempo`),
+`led meter L|R 0-31` (the strip's mask) and `led off`.
 
 ### Light show
 

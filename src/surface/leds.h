@@ -16,10 +16,17 @@
 //   only on (127, as stock sends) and off (0) are offered.
 // Button lights: channel-1 CC numbered like the button note. Shift, Minus,
 //   Plus, the three buttons above the screen and wheel Push have no light.
+// Level meters right of the screen: channel-1 CC 83 the left strip, 84 the
+//   right. Five LEDs each, green, green, green, yellow, red from the bottom;
+//   the value is a mask, bit 0 the bottom LED (2 lit only the second, 3 the
+//   bottom two). Stock also clears CC 85 and 86; nothing showed for them.
 struct Rgb { uint8_t r = 0, g = 0, b = 0; };
 constexpr unsigned surface_pad_lights = 16, surface_fader_light = 16, surface_rgb_lights = 17;
 constexpr unsigned surface_bank_lights = 8;
 constexpr uint8_t surface_bank_light_cc = 57; // A; H is 64
+constexpr unsigned surface_meter_lights = 2, surface_meter_segments = 5;
+constexpr uint8_t surface_meter_cc = 83; // left; right is 84
+constexpr uint8_t surface_meter_all = (1u << surface_meter_segments) - 1;
 
 enum class ButtonLightKind : uint8_t { None, White, WhiteRed, Red, Green };
 // Values 1 and 2 are the button's own colour, dim and full. Only white/red
@@ -73,8 +80,9 @@ public:
     SurfaceLights() {
         for (auto& light : buttons) light.store(unset_light, std::memory_order_relaxed);
         for (auto& light : banks) light.store(unset_light, std::memory_order_relaxed);
+        for (auto& light : meters) light.store(unset_light, std::memory_order_relaxed);
         for (auto& light : colours) light.store(unset_rgb, std::memory_order_relaxed);
-        sent_buttons.fill(unset_light); sent_banks.fill(unset_light); sent_colours.fill(unset_rgb);
+        sent_buttons.fill(unset_light); sent_banks.fill(unset_light); sent_meters.fill(unset_light); sent_colours.fill(unset_rgb);
     }
     SurfaceLights(const SurfaceLights&) = delete;
     SurfaceLights& operator=(const SurfaceLights&) = delete;
@@ -84,6 +92,11 @@ public:
         if (bank >= surface_bank_lights) return false;
         banks[bank].store(on ? 127 : 0, std::memory_order_relaxed); return true;
     }
+    // side 0 left, 1 right; `lit` a mask of surface_meter_segments bits, bit 0 the bottom LED.
+    bool meter(unsigned side, uint8_t lit) {
+        if (side >= surface_meter_lights || lit > surface_meter_all) return false;
+        meters[side].store(lit, std::memory_order_relaxed); return true;
+    }
     bool button(SurfaceButton button, ButtonLight light) {
         if (!button_light_supported(button, light)) return false;
         buttons[size_t(button)].store(uint8_t(light), std::memory_order_relaxed); return true;
@@ -91,6 +104,7 @@ public:
     void all_off() {
         for (unsigned n = 0; n < surface_rgb_lights; ++n) rgb(n, {});
         for (unsigned n = 0; n < surface_bank_lights; ++n) bank(n, false);
+        for (unsigned n = 0; n < surface_meter_lights; ++n) meter(n, 0);
         for (unsigned n = 0; n < buttons.size(); ++n) button(SurfaceButton(n), ButtonLight::Off);
     }
     // Turns off every light the application has set, leaving the others
@@ -100,6 +114,8 @@ public:
             if (colours[n].load(std::memory_order_relaxed) != unset_rgb) rgb(n, {});
         for (unsigned n = 0; n < surface_bank_lights; ++n)
             if (banks[n].load(std::memory_order_relaxed) != unset_light) bank(n, false);
+        for (unsigned n = 0; n < surface_meter_lights; ++n)
+            if (meters[n].load(std::memory_order_relaxed) != unset_light) meter(n, 0);
         for (unsigned n = 0; n < buttons.size(); ++n)
             if (buttons[n].load(std::memory_order_relaxed) != unset_light) button(SurfaceButton(n), ButtonLight::Off);
     }
@@ -118,6 +134,8 @@ public:
             if (!changed(buttons[n], sent_buttons[n], unset_light, [&](uint8_t value) { return surface_cc_packet(surface_buttons[n].number, value); })) return count;
         for (unsigned n = 0; n < surface_bank_lights; ++n)
             if (!changed(banks[n], sent_banks[n], unset_light, [&](uint8_t value) { return surface_cc_packet(uint8_t(surface_bank_light_cc + n), value); })) return count;
+        for (unsigned n = 0; n < surface_meter_lights; ++n)
+            if (!changed(meters[n], sent_meters[n], unset_light, [&](uint8_t value) { return surface_cc_packet(uint8_t(surface_meter_cc + n), value); })) return count;
         for (unsigned n = 0; n < surface_rgb_lights; ++n)
             if (!changed(colours[n], sent_colours[n], unset_rgb, [&](uint32_t value) {
                 return surface_rgb_packet(n, {uint8_t(value >> 16), uint8_t(value >> 8), uint8_t(value)}); })) return count;
@@ -133,8 +151,10 @@ private:
     }
     std::array<std::atomic<uint8_t>, size_t(SurfaceButton::Count)> buttons;
     std::array<std::atomic<uint8_t>, surface_bank_lights> banks;
+    std::array<std::atomic<uint8_t>, surface_meter_lights> meters;
     std::array<std::atomic<uint32_t>, surface_rgb_lights> colours;
     std::array<uint8_t, size_t(SurfaceButton::Count)> sent_buttons;
     std::array<uint8_t, surface_bank_lights> sent_banks;
+    std::array<uint8_t, surface_meter_lights> sent_meters;
     std::array<uint32_t, surface_rgb_lights> sent_colours;
 };

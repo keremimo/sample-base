@@ -41,6 +41,7 @@ int main() {
     assert(!lights.button(SurfaceButton::Shift, ButtonLight::Dim));
     assert(!lights.button(SurfaceButton::Stop, ButtonLight::RedBright));
     assert(!lights.pad(16, {1, 2, 3}) && !lights.bank(8, true));
+    assert(!lights.meter(2, 1) && !lights.meter(0, 32));
     assert(lights.button(SurfaceButton::Stop, ButtonLight::Bright));
     assert(lights.bank(0, true) && lights.bank(7, true) && lights.bank(7, false));
     assert(lights.pad(15, {127, 127, 127}) && lights.fader({101, 101, 101}));
@@ -56,24 +57,32 @@ int main() {
     lights.button(SurfaceButton::Stop, ButtonLight::Bright);
     assert(lights.update(send, 64) == 0 && wire.empty());
 
+    // Meter strips: CC 83 left, 84 right, the value a mask of the five LEDs.
+    wire.clear();
+    assert(lights.meter(0, 0b00011) && lights.meter(1, surface_meter_all));
+    assert(lights.update(send, 64) == 2);
+    assert(wire[0] == std::vector<uint8_t>({0xb0, 83, 3}) && wire[1] == std::vector<uint8_t>({0xb0, 84, 31}));
+    wire.clear();
+
     // A limit or a full queue leaves the rest for the next update.
     lights.all_off();
     assert(lights.update(send, 10) == 10);
     accept = false;
     assert(lights.update(send, 64) == 0 && wire.size() == 10);
     accept = true;
-    // 17 buttons, 7 banks (H is already off) and 17 RGB lights changed.
-    assert(lights.update(send, 64) == 17 + 7 + 17 - 10);
+    // 17 buttons, 7 banks (H is already off), 2 meters and 17 RGB lights changed.
+    assert(lights.update(send, 64) == 17 + 7 + 2 + 17 - 10);
     assert(lights.update(send, 64) == 0);
 
     // Release turns off only what the application set, and nothing if it set nothing.
     SurfaceLights fresh;
     fresh.release();
     assert(fresh.update(send, 64) == 0);
-    fresh.pad(4, {10, 20, 30}); fresh.button(SurfaceButton::Play, ButtonLight::Bright);
-    assert(fresh.update(send, 64) == 2);
+    fresh.pad(4, {10, 20, 30}); fresh.button(SurfaceButton::Play, ButtonLight::Bright); fresh.meter(1, 1);
+    assert(fresh.update(send, 64) == 3);
     wire.clear();
     fresh.release();
-    assert(fresh.update(send, 64) == 2 && wire.size() == 2);
-    assert(wire[0] == std::vector<uint8_t>({0xb0, 82, 0}) && wire[1] == bytes(surface_rgb_packet(4, {})));
+    assert(fresh.update(send, 64) == 3 && wire.size() == 3);
+    assert(wire[0] == std::vector<uint8_t>({0xb0, 82, 0}) && wire[1] == std::vector<uint8_t>({0xb0, 84, 0}) &&
+           wire[2] == bytes(surface_rgb_packet(4, {})));
 }
