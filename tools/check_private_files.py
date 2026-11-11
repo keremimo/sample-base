@@ -22,6 +22,18 @@ PATTERNS = {
     'email address': re.compile(rb'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),
 }
 
+# Images a page of the docs shows (screenshots, diagrams) are binary by nature:
+# allowed under a docs/images/ folder when they really are one of these formats,
+# still under the size limit and scanned like any other file.
+DOC_IMAGE = re.compile(rb'(?:^|/)docs/images/.+\.(?:png|jpe?g|gif|webp)$', re.IGNORECASE)
+IMAGE_HEADS = (b'\x89PNG\r\n\x1a\n', b'\xff\xd8\xff', b'GIF87a', b'GIF89a')
+
+
+def doc_image(name, data):
+    if not DOC_IMAGE.search(name):
+        return False
+    return data.startswith(IMAGE_HEADS) or (data[:4] == b'RIFF' and data[8:12] == b'WEBP')
+
 
 def main():
     root = Path(git('rev-parse', '--show-toplevel').decode().strip())
@@ -63,7 +75,7 @@ def main():
             errors.append((name, 'file exceeds source-only size limit'))
             continue
         data = git('-C', str(root), 'cat-file', 'blob', blob.decode())
-        if b'\0' in data:
+        if b'\0' in data and not doc_image(name, data):
             errors.append((name, 'binary data is not source text'))
         for reason, pattern in PATTERNS.items():
             if pattern.search(data):
