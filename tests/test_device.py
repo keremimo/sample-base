@@ -5,7 +5,97 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from device import Device, service_unit
+from device import Device, service_unit, stale_releases
+
+ACTIVE_RELEASE = "/run/sample-base-release-abcdef012345"
+RUN_NAMES = ["sample-base", "sample-base-release-abcdef012345", "sample-base-release-2e98caf725ed",
+             "sample-base-release-b62e9b609711", "sample-base-release-sdadc1aeff3b4d", "sample-base-sd-started",
+             "sample-base-sd.log", "sample-base-uac2-p_chmask", "systemd"]
+DF = "Filesystem 1024-blocks Used Available Capacity Mounted on\ntmpfs 1009008 144400 {} 14% /run\n"
+
+
+def fake_mpc(calls, free_kb=864608, active=ACTIVE_RELEASE, fail=None):
+    """A run() that answers like the MPC and records each command."""
+    def run(command, **kwargs):
+        calls.append(command)
+        if command == fail:
+            raise RuntimeError("simulated failure")
+        out = {"df -Pk /run": DF.format(free_kb), "readlink /run/sample-base": active + "\n",
+               "ls -1A /run": "\n".join(RUN_NAMES) + "\n"}.get(command, "OK frames=0")
+        return subprocess.CompletedProcess([], 0, out, "")
+    return run
+
+
+class ReleaseCleanupTests(unittest.TestCase):
+    def test_only_stage_releases_other_than_the_active_one(self):
+        self.assertEqual(stale_releases(RUN_NAMES, ACTIVE_RELEASE),
+                         ["/run/sample-base-release-2e98caf725ed", "/run/sample-base-release-b62e9b609711"])
+
+    def test_near_misses_are_kept(self):
+        names = ["sample-base-release-sdadc1aeff3b4d",   # the SD boot's
+                 "sample-base-release-sd0123456789",     # SD, 12 characters after the prefix
+                 "sample-base-release-ABCDEF012345", "sample-base-release-abcdef01234",
+                 "sample-base-release-abcdef0123456", "sample-base-release-abcdef01234g",
+                 "sample-base-release-abcdef012345.old", " sample-base-release-abcdef012345",
+                 "sample-base-release-abcdef012345 ", "x-sample-base-release-abcdef012345",
+                 "sample-base-release-", "sample-base-release-*", "sample-base-release-$HOME000000",
+                 "sample-base-release-٠١٢٣٤٥٦٧٨٩ab", "sample-base", "sample-base.next"]
+        self.assertEqual(stale_releases(names, ACTIVE_RELEASE), [])
+
+    def test_sd_release_kept_while_active(self):
+        self.assertEqual(stale_releases(RUN_NAMES, "/run/sample-base-release-sdadc1aeff3b4d"),
+                         ["/run/sample-base-release-2e98caf725ed", "/run/sample-base-release-abcdef012345",
+                          "/run/sample-base-release-b62e9b609711"])
+
+    def test_no_active_release_removes_nothing(self):
+        for active in ("", "/run/other", "/run/sample-base-release-", "/run/sample-base-release-../x"):
+            with self.assertRaises(ValueError):
+                stale_releases(RUN_NAMES, active)
+
+    def test_start_removes_stale_releases_after_the_app_is_ready(self):
+        device, calls = Device(), []
+        with patch.object(device, "stage", return_value=ACTIVE_RELEASE), \
+                patch.object(device, "run", side_effect=fake_mpc(calls)):
+            device.start(app="melodee")
+        removals = [command for command in calls if command.startswith("rm ")]
+        self.assertEqual(removals, ["rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711"])
+        self.assertGreater(calls.index(removals[0]), calls.index("/run/sample-base/sample-base --ctl status"))
+
+    def test_cleanup_skipped_when_active_link_is_elsewhere(self):
+        device, calls = Device(), []
+        with patch.object(device, "stage", return_value="/run/sample-base-release-111111111111"), \
+                patch.object(device, "run", side_effect=fake_mpc(calls)):
+            device.start()
+        self.assertFalse(any(command.startswith("rm ") for command in calls))
+
+    def test_failed_cleanup_keeps_the_app_running(self):
+        device, calls = Device(), []
+        failing = "rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711"
+        with patch.object(device, "stage", return_value=ACTIVE_RELEASE), \
+                patch.object(device, "run", side_effect=fake_mpc(calls, fail=failing)):
+            device.start()
+        self.assertIn(failing, calls)
+        self.assertNotIn("systemctl start ac50.service", calls)
+
+    def test_stage_refuses_when_run_is_low(self):
+        device, calls = Device(), []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "build").mkdir()
+            (root / "build/sample-base").write_bytes(b"x" * (20 << 20))
+            (root / "install").mkdir()
+            (root / "install/restore-stock.sh").write_text("#!/bin/sh\nexit 0\n")
+            with patch("device.ROOT", root), patch("device.BINARY", root / "build/sample-base"), \
+                    patch.object(device, "check_identity"), \
+                    patch.object(device, "run", side_effect=fake_mpc(calls, free_kb=40 << 10)), \
+                    patch("device.subprocess.run") as transfer:
+                with self.assertRaises(RuntimeError) as raised:
+                    device.stage()
+        self.assertIn("Only 40 MB free on the MPC's /run", str(raised.exception))
+        self.assertIn("rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711",
+                      str(raised.exception))
+        self.assertFalse(any(command.startswith(("mkdir", "rm")) for command in calls))
+        transfer.assert_not_called()
 
 
 class SwitchingTests(unittest.TestCase):
@@ -26,8 +116,10 @@ class SwitchingTests(unittest.TestCase):
             (root / "build/sample-base").write_bytes(b"test executable")
             (root / "install").mkdir()
             (root / "install/restore-stock.sh").write_text("#!/bin/sh\nexit 0\n")
-            with patch("device.ROOT", root), patch.object(device, "check_identity"), \
-                    patch.object(device, "run") as run, patch("device.subprocess.run") as transfer:
+            with patch("device.ROOT", root), patch("device.BINARY", root / "build/sample-base"), \
+                    patch.object(device, "check_identity"), \
+                    patch.object(device, "run", side_effect=fake_mpc([])) as run, \
+                    patch("device.subprocess.run") as transfer:
                 release = device.stage()
         self.assertEqual(transfer.call_count, 2)
         self.assertEqual(transfer.call_args_list[0].args[0][-1], "root@" + device.host + ":" + release + "/sample-base")
@@ -64,6 +156,7 @@ class SwitchingTests(unittest.TestCase):
         self.assertIn("systemctl start ac50.service", calls)
         self.assertIn("systemctl is-active --quiet ac50.service", calls)
         self.assertFalse(any("ac50.service.d" in command for command in calls))
+        self.assertFalse(any(command.startswith("rm ") for command in calls))
 
     def test_start_swaps_apps_without_restoring_stock(self):
         device = Device()

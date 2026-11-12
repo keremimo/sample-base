@@ -158,7 +158,8 @@ there is no additional confirmation prompt.
 
 Start verifies the known stock identity, copies the app and recovery script
 into a **new RAM directory**, checks their hashes, and runs its audio self-test
-before switching.
+before switching. It stops first when `/run` is short of room, and once the new
+app runs it removes the copies earlier starts left there (never the SD boot's).
 An independent `sample-base.service` stops `ac50.service` for the session and
 starts it again after **normal exit, wheel Push, remote stop, startup failure,
 or a process crash**. During system shutdown the recovery script lets systemd

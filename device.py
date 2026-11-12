@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import time
@@ -18,6 +19,13 @@ UNIT_PATH = "/run/systemd/system/sample-base.service"
 SWAP_DROPIN_DIR = UNIT_PATH + ".d"
 SWAP_DROPIN = SWAP_DROPIN_DIR + "/swap.conf"
 ACTIVE = "/run/sample-base"
+RELEASE_PREFIX = "/run/sample-base-release-"
+# The releases stage() makes. The SD boot's own (install/sd-worker.sh) is
+# sample-base-release-sd<12 hex digits> and never matches.
+RELEASE_NAME = re.compile(r"sample-base-release-[0-9a-f]{12}")
+# Room to keep on /run (RAM) beyond the staged files: systemd refuses
+# daemon-reload with under 16 MiB free there; the self-test WAV is ~1 MB.
+RUN_HEADROOM = 32 << 20
 # The firmware runs a card's autorun only when autorun.check is this digest of
 # autorun.json, autorun.sh and the salt (as mpc-sample-plugins found).
 AUTORUN_SALT = b"f7bed1c9-7e90-4731-9194-c996666b4331"
@@ -63,8 +71,17 @@ def valid_app_name(app):
     return bool(app) and len(app) <= 32 and all(c.isascii() and (c.isalnum() or c in "-_") for c in app)
 
 
+def stale_releases(names, active):
+    """The /run paths to remove: stage()'s releases among the names in /run,
+    except the active one."""
+    if not active.startswith(RELEASE_PREFIX) or not active.removeprefix(RELEASE_PREFIX).isalnum():
+        raise ValueError("No active release to keep: " + repr(active))
+    keep = active.removeprefix("/run/")
+    return sorted("/run/" + name for name in names if RELEASE_NAME.fullmatch(name) and name != keep)
+
+
 def service_unit(release, seconds=0, app="demos"):
-    if not release.startswith("/run/sample-base-release-") or not release.removeprefix("/run/sample-base-release-").isalnum():
+    if not release.startswith(RELEASE_PREFIX) or not release.removeprefix(RELEASE_PREFIX).isalnum():
         raise ValueError("Invalid RAM release path")
     if not isinstance(seconds, int) or seconds < 0:
         raise ValueError("Invalid session duration")
@@ -112,7 +129,14 @@ class Device:
         for path in files.values():
             if not path.is_file():
                 raise RuntimeError("Build first with ./build.sh")
-        release = "/run/sample-base-release-" + uuid.uuid4().hex[:12]
+        need = sum(path.stat().st_size for path in files.values()) + RUN_HEADROOM
+        free = self.run_free()
+        if free < need:
+            stale = self.leftover_releases()
+            raise RuntimeError(f"Only {free >> 20} MB free on the MPC's /run (RAM); staging needs {need >> 20} MB."
+                               " Nothing was changed." +
+                               (" Old releases to remove: rm -r " + " ".join(stale) if stale else ""))
+        release = RELEASE_PREFIX + uuid.uuid4().hex[:12]
         self.run("mkdir -m 700 " + release)
         sums = []
         for name, path in files.items():
@@ -125,6 +149,37 @@ class Device:
         # still running; neither operation opens hardware audio or the screen.
         self.run(release + "/sample-base --self-test " + release + "/test.wav")
         return release
+
+    def run_free(self):
+        """Bytes free on /run, the RAM disk releases are staged in."""
+        df = self.run("df -Pk /run").stdout
+        try:
+            return int(df.splitlines()[-1].split()[3]) * 1024
+        except (IndexError, ValueError):
+            raise RuntimeError("Unexpected df output for /run: " + df.strip()) from None
+
+    def leftover_releases(self):
+        """stage()'s releases on the MPC other than the active one (none
+        when no release is active)."""
+        active = self.run("readlink " + ACTIVE, check=False).stdout.strip()
+        try:
+            return stale_releases(self.run("ls -1A /run").stdout.splitlines(), active)
+        except ValueError:
+            return []
+
+    def remove_stale_releases(self, release):
+        """Frees the RAM earlier starts took, once `release` runs. A failure
+        only costs that RAM until the next start; the app keeps running."""
+        try:
+            active = self.run("readlink " + ACTIVE).stdout.strip()
+            if active != release:
+                raise RuntimeError(ACTIVE + " points at " + (active or "nothing") + ", not " + release)
+            stale = stale_releases(self.run("ls -1A /run").stdout.splitlines(), active)
+            if stale:
+                self.run("rm -r " + " ".join(stale))
+                print(f"Removed {len(stale)} old release(s) from /run; {self.run_free() >> 20} MB free.")
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
+            print("Old releases left on /run: " + str(error))
 
     def start(self, seconds=0, app="demos"):
         if not isinstance(seconds, int) or seconds < 0:
@@ -143,7 +198,9 @@ class Device:
             # The first start after a boot rebinds the USB gadget for stems,
             # dropping this SSH link until the computer brings it back.
             deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
+            while True:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Standalone app did not become ready; stock app is being restored")
                 state = self.run("systemctl is-active sample-base.service", check=False)
                 if state.stdout.strip() in ("failed", "inactive"):
                     raise RuntimeError("Standalone app failed to start; stock app is being restored")
@@ -151,14 +208,15 @@ class Device:
                 if ready.returncode == 0:
                     print(ready.stdout.strip())
                     print("sample-base is running. Push returns to the stock app.")
-                    return
+                    break
                 time.sleep(0.2)
-            raise RuntimeError("Standalone app did not become ready; stock app is being restored")
         except Exception:
             self.stock()
             logs = self.run("journalctl -u sample-base.service -n 18 --no-pager", check=False)
             print(logs.stdout)
             raise
+        # Outside the try: nothing here may bring the stock app back.
+        self.remove_stale_releases(release)
 
     def stock(self):
         # ExecStopPost restores stock even after a crash or forced termination.
