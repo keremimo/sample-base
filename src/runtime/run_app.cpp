@@ -31,6 +31,7 @@ void record_screen(ScreenStats& screen, const Display::Stats& stats, std::chrono
     screen.presented.store(stats.presented, std::memory_order_relaxed);
     screen.pushed.store(stats.pushed, std::memory_order_relaxed);
     screen.pixels.store(stats.pixels, std::memory_order_relaxed);
+    screen.clips.store(stats.clips, std::memory_order_relaxed);
     screen.last_push_us.store(stats.last_push_us, std::memory_order_relaxed);
     screen.max_push_us.store(stats.max_push_us, std::memory_order_relaxed);
     screen.full_push_us.store(stats.full_push_us, std::memory_order_relaxed);

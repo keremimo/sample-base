@@ -16,7 +16,9 @@
 // push: present() hands it a frame and returns, and waits first only while
 // the previous frame is still going out. The screen thread therefore draws
 // one frame while the panel receives the last, at whatever rate the panel
-// takes. Only the rows and columns that changed are sent.
+// takes. Only what changed is sent, in the rectangles and order of
+// display_damage::plan(): a moving line a column at a time, so the panel's own
+// refresh (a screen column at a time) never shows it broken.
 class Display {
 public:
     static constexpr int width = 320, height = 240;
@@ -24,6 +26,7 @@ public:
         uint64_t presented = 0; // Frames handed to present(), changed or not
         uint64_t pushed = 0;    // Frames that changed and went to the panel
         uint64_t pixels = 0;    // Pixels sent, 2 bytes each over SPI
+        uint64_t clips = 0;     // Rectangles sent, each its own flush
         uint32_t last_push_us = 0, max_push_us = 0, full_push_us = 0; // full: the latest whole-screen push
     };
     Display();
@@ -53,10 +56,10 @@ private:
     bool first_present = true; // Screen thread only
     std::exception_ptr failure;
     std::thread worker;
-    std::atomic<uint64_t> presented {0}, pushed {0}, sent_pixels {0};
+    std::atomic<uint64_t> presented {0}, pushed {0}, sent_pixels {0}, sent_clips {0};
     std::atomic<uint32_t> last_push_us {0}, max_push_us {0}, full_push_us {0};
 
     void run();
-    void push(); // Worker: sends what differs between `pending` and `shown`.
+    void push(); // Worker: sends what differs between `pending` and `shown` (display_damage::plan).
     void release();
 };

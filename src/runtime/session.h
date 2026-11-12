@@ -16,7 +16,7 @@
 //            them; 10 a second once the screen stands still
 // The screen thread's counters (Display::Stats, plus the last draw).
 struct ScreenStats {
-    std::atomic<uint64_t> presented {0}, pushed {0}, pixels {0};
+    std::atomic<uint64_t> presented {0}, pushed {0}, pixels {0}, clips {0};
     std::atomic<uint32_t> last_push_us {0}, max_push_us {0}, full_push_us {0}, draw_us {0};
 };
 
