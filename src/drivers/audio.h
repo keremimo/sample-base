@@ -28,6 +28,8 @@ struct AudioFormat {
     bool operator!=(const AudioFormat& other) const { return !(*this == other); }
 };
 
+class SpeakerHold; // drivers/codec_power.h
+
 struct AudioStats {
     std::atomic<uint64_t> frames {0}, capture_frames {0}, sounding_blocks {0};
     std::atomic<unsigned> xruns {0}, capture_xruns {0};
@@ -39,11 +41,14 @@ struct AudioStats {
 
 // Callback receives exactly 128 stereo S32 frames, with zero input when
 // capture is unavailable. Callback must not allocate, block or access files.
-// The constructor throws when the playback PCM refuses `format`.
+// The constructor throws when the playback PCM refuses `format`. With a
+// `speaker` hold, opening keeps the built-in speaker off while it powers the
+// codec up (drivers/codec_power.h).
 class AudioDevice {
 public:
     using Render = void (*)(void*, const AudioBlock&, AudioBlock&);
-    AudioDevice(const std::string& output = "hw:I2S,0", const std::string& input = "hw:I2S,0", AudioFormat format = {});
+    AudioDevice(const std::string& output = "hw:I2S,0", const std::string& input = "hw:I2S,0", AudioFormat format = {},
+                SpeakerHold* speaker = nullptr);
     ~AudioDevice();
     AudioDevice(const AudioDevice&) = delete;
     AudioDevice& operator=(const AudioDevice&) = delete;

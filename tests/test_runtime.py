@@ -35,8 +35,8 @@ class RuntimeTests(unittest.TestCase):
             symbols = ("snd_ctl_open", "snd_ctl_close", "snd_ctl_elem_info", "snd_ctl_elem_read", "snd_ctl_elem_write",
                        "snd_ctl_elem_info_get_type", "snd_ctl_elem_info_get_count", "snd_ctl_elem_info_is_readable",
                        "snd_ctl_elem_info_is_writable", "snd_ctl_elem_info_get_min", "snd_ctl_elem_info_get_max")
-            compile_fixture(binary, "tests/mixer.cpp", "src/drivers/mixer.cpp", "src/drivers/platform.cpp",
-                            extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
+            compile_fixture(binary, "tests/mixer.cpp", "src/drivers/mixer.cpp", "src/drivers/codec_power.cpp",
+                            "src/drivers/platform.cpp", extra=("-lasound", *("-Wl,--wrap=" + name for name in symbols)))
             subprocess.run([str(binary)], check=True, timeout=5)
 
     def test_jack_detection_events_initial_states_and_card_loss(self):

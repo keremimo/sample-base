@@ -43,7 +43,7 @@ The kernel sources remain under their own upstream licences.
 
 | Area | Public wiring | Application interface |
 | --- | --- | --- |
-| Audio output and capture | `I2S` card, AK4558 codec, stereo, 44.1, 48 or 96 kHz | `AudioDevice` gives a fixed 128-frame stereo S32 callback with input and output blocks; partial I/O and underruns are handled outside the callback; it sets the codec's clocks only while the codec is powered down behind the board's output mute ("Opening and closing without a click") |
+| Audio output and capture | `I2S` card, AK4558 codec, stereo, 44.1, 48 or 96 kHz | `AudioDevice` gives a fixed 128-frame stereo S32 callback with input and output blocks; partial I/O and underruns are handled outside the callback; it sets the codec's clocks only while the codec is powered down behind the board's output mute, and keeps the built-in speaker off while the codec powers up ("Opening and closing without a click") |
 | Microphone, line input, speaker and jacks | DAPM pin switches `Builtin Microphone`, `TRS`, `Builtin Speaker`; headphone/line-out detection | `HardwareMixer` lists live ALSA controls, types, ranges, enum labels and jack values; validates changes and restores changed values on normal exit |
 | Jack detection | `hp-det-gpio` GPIO3_B0 and `out-det-gpio` GPIO3_B1 on the I2S simple-audio-card, debounced by the kernel | `JackDetect` follows the `Headphones Jack` and `Line Out Jack` card controls through ALSA control events; the runtime calls `App::jack()` on every plug and unplug |
 | Surface inputs and outputs | UART3, 4,000,000 baud, `Control Surface` raw MIDI | `HardwareMidi` receives all channel, pressure, system-common, realtime and bounded SysEx messages; queues complete outbound messages |
@@ -216,20 +216,34 @@ while an app's rate differed from the one before it: the stock app's
 44.1 kHz, or the 44.1 kHz default an app opened before reopening at its
 saved rate.
 
+The built-in speaker has no such mute. Its amplifier is a
+`simple-audio-amplifier` (GPIO `SPKR_EN`) behind the `Builtin Speaker` pin,
+and DAPM enables it as soon as the DACs are up. Traced through
+`/sys/kernel/debug/gpio`, `SPKR_EN` rose 20 ms after the codec left reset
+(`nCODEC_RESET`), while the codec's outputs still settle, so every power-up
+clicked in the speaker; with headphones in too, for the moment before the app
+switched the speaker off.
+
 `AudioDevice` therefore sets the codec's clocks only while it is powered
-down ([src/drivers/codec_power.h](../src/drivers/codec_power.h)):
+down, and keeps the speaker off while it powers up
+([src/drivers/codec_power.h](../src/drivers/codec_power.h)):
 
 | Moment | What it does |
 | --- | --- |
 | Close | After the stream stops, its hardware setup is freed (`snd_pcm_hw_free()`) with the link's `pmdown_time` (`/sys/class/sound/card<N>/device/<link>/pmdown_time`, the link named by the PCM's id) at 0 for that moment and then restored: DAPM shuts the mute, waits 50 ms, powers the DACs down and holds the codec in reset (`PDN`) at once. Every close does this, a reopen and leaving the app alike, so the next stream, at any rate, starts a codec that is off. |
 | Open | When the codec is still powered (the link's `dapm_widget` reads `PM State` other than `Off`) at another rate, the stream another program left, the device first takes it over at that rate: the master clock's rate (`i2s1_mclkout_tx` in debugfs, `/sys/kernel/debug/clk/i2s1_mclkout_tx/clk_rate`, ÷ 512) names it, and preparing a stream cancels the kernel's pending power-down without touching the clock. That setup is then freed as at a close, and the wanted rate is set on a codec that is off. |
+| Speaker | Unless the codec already runs at the wanted rate, the device first switches `Builtin Speaker Switch` off (`SpeakerHold`), so preparing the stream powers the codec up without the speaker's amplifier. The runtime's service thread switches it back on 1000 ms after the stream is prepared, as the mute opens the jacks; an app's speaker change meanwhile (`HardwareMixer::speaker()`, `mixer-set`) waits until then, the last one counting. |
 
-The headphones and line out then stay muted for the mute's 1000 ms after a
-stream starts; the built-in speaker has no such mute (its amplifier powers
-up after the DACs). A PCM without an ASoC codec link (USB, `null`, a host
+All three outputs then stay silent for about a second after a stream
+starts: the jacks behind the mute, the speaker behind its switch. Leaving
+the app closes the device before the mixer restores its controls, so the
+restored speaker switch does not start the amplifier for a moment before
+the codec powers down; the restored value is the switch as it was before
+the first hold. A PCM without an ASoC codec link (USB, `null`, a host
 build), or a codec whose clock rate cannot be read, is opened and closed
 as before. A sample-base killed while `pmdown_time` reads 0 leaves it there;
-restore-stock.sh puts the kernel's 5000 back.
+restore-stock.sh puts the kernel's 5000 back. One killed during the speaker's
+second leaves the speaker switch off until an app sets it or the MPC restarts.
 
 The USB-C audio gadget follows the device's rate: when it changes, the
 service thread rewrites the UAC2 function's `p_srate` and `c_srate` (equal,
@@ -448,7 +462,9 @@ are when sample-base read the control, not the GPIO edge.
 Nothing is rerouted on a plug: the kernel already powers the jack's pin, and
 the built-in speaker stays as `Builtin Speaker Switch` was left. One reading
 on the device found it off with headphones plugged in. An app that wants the
-speaker to follow the jacks sets that switch in `jack()`.
+speaker to follow the jacks sets that switch in `jack()`; for the second
+after the codec powers up the change waits ("Opening and closing without a
+click").
 
 ## Input recording showcase
 

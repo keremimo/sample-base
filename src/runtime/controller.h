@@ -34,7 +34,9 @@ public:
     // `usb_output` belongs to run_app(), which feeds it from the audio thread;
     // the controller only starts, stops and reports it.
     // `usb_rate`: the USB-C audio gadget follows the audio device's rate (set_uac2_rate()).
-    Controller(App& app, bool surface_required, UsbAudioOutput& usb_output, bool usb_rate = false);
+    // `speaker_hold`, also run_app()'s: the mixer ends its holds and defers the app's speaker changes meanwhile.
+    Controller(App& app, bool surface_required, UsbAudioOutput& usb_output, bool usb_rate = false,
+               SpeakerHold* speaker_hold = nullptr);
     // Service thread. Returns once session.running is cleared and the MIDI
     // thread has stopped; a failure sets session.failed.
     void run(Session& session, ControlServer& server);

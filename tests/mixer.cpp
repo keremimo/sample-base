@@ -3,8 +3,9 @@
 #include <cassert>
 #include <cstring>
 
-static long values[5][2] = {{0,0}, {80,81}, {1,0}, {0,0}, {1,0}};
-static const char* names[] = {"", "Playback Volume", "Builtin Microphone Switch", "TRS Switch", "Headphone Jack"};
+constexpr unsigned controls = 6;
+static long values[controls][2] = {{0,0}, {80,81}, {1,0}, {0,0}, {1,0}, {1,0}};
+static const char* names[] = {"", "Playback Volume", "Builtin Microphone Switch", "TRS Switch", "Headphone Jack", "Builtin Speaker Switch"};
 extern "C" int __wrap_snd_ctl_open(snd_ctl_t** ctl, const char* name, int) {
     if (strcmp(name, "hw:I2S")) return -1;
     *ctl = reinterpret_cast<snd_ctl_t*>(1); return 0;
@@ -12,8 +13,8 @@ extern "C" int __wrap_snd_ctl_open(snd_ctl_t** ctl, const char* name, int) {
 extern "C" int __wrap_snd_ctl_close(snd_ctl_t*) { return 0; }
 extern "C" int __wrap_snd_ctl_elem_info(snd_ctl_t*, snd_ctl_elem_info_t* info) {
     unsigned id = snd_ctl_elem_info_get_numid(info);
-    if (!id) for (unsigned n = 1; n < 5; ++n) if (!strcmp(snd_ctl_elem_info_get_name(info), names[n])) id = n;
-    if (id == 0 || id >= 5) return -1;
+    if (!id) for (unsigned n = 1; n < controls; ++n) if (!strcmp(snd_ctl_elem_info_get_name(info), names[n])) id = n;
+    if (id == 0 || id >= controls) return -1;
     snd_ctl_elem_info_set_numid(info, id); snd_ctl_elem_info_set_name(info, names[id]); return 0;
 }
 extern "C" snd_ctl_elem_type_t __wrap_snd_ctl_elem_info_get_type(const snd_ctl_elem_info_t* info) {
@@ -25,13 +26,13 @@ extern "C" int __wrap_snd_ctl_elem_info_is_writable(const snd_ctl_elem_info_t* i
 extern "C" long __wrap_snd_ctl_elem_info_get_min(const snd_ctl_elem_info_t*) { return 0; }
 extern "C" long __wrap_snd_ctl_elem_info_get_max(const snd_ctl_elem_info_t*) { return 255; }
 extern "C" int __wrap_snd_ctl_elem_read(snd_ctl_t*, snd_ctl_elem_value_t* value) {
-    unsigned id = snd_ctl_elem_value_get_numid(value); assert(id > 0 && id < 5);
+    unsigned id = snd_ctl_elem_value_get_numid(value); assert(id > 0 && id < controls);
     if (id == 1) for (unsigned n = 0; n < 2; ++n) snd_ctl_elem_value_set_integer(value, n, values[id][n]);
     else snd_ctl_elem_value_set_boolean(value, 0, values[id][0]);
     return 0;
 }
 extern "C" int __wrap_snd_ctl_elem_write(snd_ctl_t*, snd_ctl_elem_value_t* value) {
-    unsigned id = snd_ctl_elem_value_get_numid(value); assert(id > 0 && id < 4);
+    unsigned id = snd_ctl_elem_value_get_numid(value); assert(id > 0 && id < controls && id != 4);
     if (id == 1) for (unsigned n = 0; n < 2; ++n) values[id][n] = snd_ctl_elem_value_get_integer(value, n);
     else values[id][0] = snd_ctl_elem_value_get_boolean(value, 0);
     assert(!(values[2][0] && values[3][0])); // Including every restore write.
@@ -51,4 +52,24 @@ int main() {
     }
     assert(values[1][0] == 80 && values[1][1] == 81 && values[2][0] == 1 && values[3][0] == 0);
     HardwareMixer absent("missing"); assert(!absent.available() && !absent.input("off") && absent.switch_value("Headphone Jack") == -1);
+
+    // The speaker held off while the codec powers up (SpeakerHold, on its own handle to the switch).
+    SpeakerHold hold({[](int card) { return card == 0 ? int(values[5][0]) : -1; },
+                      [](int, bool on) { values[5][0] = on; return true; }});
+    {
+        HardwareMixer mixer; mixer.attach(&hold);
+        hold.hold(0);
+        assert(hold.holding() && values[5][0] == 0);
+        assert(mixer.speaker(true) && values[5][0] == 0); // the app's change waits for the end
+        assert(mixer.set(5, {0}) && values[5][0] == 0);   // mixer-set's too; the last one counts
+        hold.powered_up();
+        mixer.poll();
+        assert(hold.holding()); // the codec settles for a second
+        hold.powered_up(SpeakerHold::Clock::now() - codec_settle);
+        mixer.poll();
+        assert(!hold.holding() && values[5][0] == 0);
+        assert(mixer.speaker(true) && values[5][0] == 1); // no hold: at once
+        assert(mixer.speaker(false) && values[5][0] == 0);
+    }
+    assert(values[5][0] == 1); // leaving restores the switch as it was before the hold, not held off
 }

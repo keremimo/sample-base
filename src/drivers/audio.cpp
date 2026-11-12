@@ -57,7 +57,7 @@ void AudioDevice::configure(snd_pcm_t* pcm, bool capture, const AudioFormat& for
     check(snd_pcm_sw_params(pcm, sw), "Apply PCM software settings");
     check(snd_pcm_prepare(pcm), "Prepare PCM");
 }
-AudioDevice::AudioDevice(const std::string& out, const std::string& in, AudioFormat format) : opened(format) {
+AudioDevice::AudioDevice(const std::string& out, const std::string& in, AudioFormat format, SpeakerHold* speaker) : opened(format) {
     if (!format.valid()) throw std::runtime_error("Unsupported audio format " + std::to_string(format.rate) + " Hz, "
                                                   + std::to_string(format.periods) + " periods");
     check(snd_pcm_open(&output, out.c_str(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK), "Open playback");
@@ -69,16 +69,24 @@ AudioDevice::AudioDevice(const std::string& out, const std::string& in, AudioFor
         // closing without a click").
         CodecLink codec = codec_of(output);
         AudioFormat running {codec_clock_rate(codec), format.periods};
-        if (running.rate != format.rate && running.valid() && codec_powered(codec)) {
+        bool powered = codec_powered(codec);
+        // Unless the codec already runs at this rate, preparing below powers it up, and the speaker's
+        // amplifier would come on before the codec's outputs settle: off until they have.
+        if (speaker && codec.found() && !(powered && running.rate == format.rate)) speaker->hold(codec.card);
+        if (running.rate != format.rate && running.valid() && powered) {
             try { configure(output, false, running); } catch (const std::exception&) {}
             free_quietly(output);
         }
         configure(output, false, format);
+        if (speaker) speaker->powered_up();
         if (in != "off" && snd_pcm_open(&input, in.c_str(), SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK) >= 0) {
             try { configure(input, true, format); }
             catch (const std::exception& error) { std::cerr << "Capture unavailable: " << error.what() << '\n'; snd_pcm_close(input); input = nullptr; }
         }
-    } catch (...) { free_quietly(output); snd_pcm_close(output); output = nullptr; throw; }
+    } catch (...) {
+        if (speaker) speaker->powered_up();
+        free_quietly(output); snd_pcm_close(output); output = nullptr; throw;
+    }
 }
 // The codec powers down as the device closes, not pmdown_time later: the next device, at any rate, or the
 // next program, starts it from off behind the board's output mute, which opens a second after it starts.

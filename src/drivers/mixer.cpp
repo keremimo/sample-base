@@ -57,14 +57,20 @@ bool HardwareMixer::set(unsigned id, const std::vector<long>& values) {
         }
         routes_changed = true;
     }
+    bool is_speaker = !strcmp(name, speaker_switch);
     snd_ctl_elem_value_t* current; snd_ctl_elem_value_alloca(&current);
     snd_ctl_elem_value_set_numid(current, id);
     if (snd_ctl_elem_read(ctl, current) < 0) return false;
     if (!original.count(id)) {
         snd_ctl_elem_value_t* saved = nullptr;
         if (snd_ctl_elem_value_malloc(&saved) < 0) return false;
-        snd_ctl_elem_value_copy(saved, current); original[id] = saved;
+        snd_ctl_elem_value_copy(saved, current);
+        // A hold may have switched the speaker off before this first change: what it was before that.
+        int before = is_speaker && speaker_hold ? speaker_hold->original() : -1;
+        if (before >= 0) for (unsigned i = 0; i < count; ++i) snd_ctl_elem_value_set_boolean(saved, i, before);
+        original[id] = saved;
     }
+    if (is_speaker && speaker_hold && speaker_hold->defer(values[0] != 0)) return true;
     for (unsigned i = 0; i < count; ++i) {
         if (type == SND_CTL_ELEM_TYPE_BOOLEAN) snd_ctl_elem_value_set_boolean(current, i, values[i]);
         else if (type == SND_CTL_ELEM_TYPE_INTEGER) snd_ctl_elem_value_set_integer(current, i, values[i]);
@@ -144,4 +150,32 @@ std::string HardwareMixer::json() const {
     }
     snd_ctl_elem_list_free_space(list);
     return out.str() + "]}";
+}
+
+namespace {
+// Card N's speaker switch: read (`write` -1) or set to `write`; what it reads afterwards, -1 when missing.
+int card_speaker_switch(int card, int write) {
+    snd_ctl_t* ctl = nullptr;
+    if (card < 0 || snd_ctl_open(&ctl, ("hw:" + std::to_string(card)).c_str(), 0) < 0) return -1;
+    snd_ctl_elem_info_t* info; snd_ctl_elem_info_alloca(&info);
+    snd_ctl_elem_info_set_interface(info, SND_CTL_ELEM_IFACE_MIXER);
+    snd_ctl_elem_info_set_name(info, speaker_switch);
+    snd_ctl_elem_value_t* value; snd_ctl_elem_value_alloca(&value);
+    int result = -1;
+    if (snd_ctl_elem_info(ctl, info) >= 0 && snd_ctl_elem_info_get_type(info) == SND_CTL_ELEM_TYPE_BOOLEAN) {
+        snd_ctl_elem_value_set_numid(value, snd_ctl_elem_info_get_numid(info));
+        if (snd_ctl_elem_read(ctl, value) >= 0) result = snd_ctl_elem_value_get_boolean(value, 0) ? 1 : 0;
+        if (result >= 0 && write >= 0) {
+            for (unsigned i = 0; i < snd_ctl_elem_info_get_count(info) && i < 128; ++i) snd_ctl_elem_value_set_boolean(value, i, write);
+            result = snd_ctl_elem_write(ctl, value) >= 0 ? write : -1;
+        }
+    }
+    snd_ctl_close(ctl);
+    return result;
+}
+} // namespace
+
+SwitchIo speaker_switch_io() {
+    return {[](int card) { return card_speaker_switch(card, -1); },
+            [](int card, bool on) { return card_speaker_switch(card, on ? 1 : 0) >= 0; }};
 }

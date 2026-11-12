@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     assert(!codec_link(2, id, sys, clock).found());
     write_file(link + "/pmdown_time", "5000\n");
     CodecLink codec = codec_link(2, id, sys, clock);
-    assert(codec.found() && codec.dir == link && codec.clock == clock);
+    assert(codec.found() && codec.dir == link && codec.clock == clock && codec.card == 2);
     assert(!codec_link(1, id, sys, clock).found());          // another card
     assert(!codec_link(-1, "null", sys, clock).found());     // a plug-in PCM has no card
     assert(!codec_link(2, "", sys, clock).found());
@@ -70,5 +70,55 @@ int main(int argc, char** argv) {
     write_file(link + "/pmdown_time", "0\n");
     { ImmediatePowerDown again(codec); }
     assert(first_line(link + "/pmdown_time") == "0");
+
+    // The speaker held off while the codec powers up, on a switch that counts its writes (card 2 has one).
+    int speaker = 1, writes = 0;
+    SwitchIo io {[&](int on_card) { return on_card == 2 ? speaker : -1; },
+                 [&](int on_card, bool on) { if (on_card != 2) return false; speaker = on; ++writes; return true; }};
+    const auto t = SpeakerHold::Clock::time_point {} + std::chrono::hours(1);
+    {
+        SpeakerHold hold(io);
+        assert(hold.original() == -1 && !hold.holding() && !hold.defer(false));
+        hold.hold(1); // no speaker on that card: nothing to hold
+        assert(!hold.holding() && writes == 0);
+        hold.hold(2);
+        assert(hold.holding() && speaker == 0 && writes == 1 && hold.original() == 1);
+        hold.poll(t + std::chrono::hours(9)); // the codec not up yet
+        assert(hold.holding() && speaker == 0);
+        hold.powered_up(t);
+        hold.poll(t + codec_settle - std::chrono::milliseconds(1));
+        assert(hold.holding() && speaker == 0);
+        hold.poll(t + codec_settle);
+        assert(!hold.holding() && speaker == 1 && writes == 2);
+        // The app's changes wait for the end, the last one counting; a second power-up restarts the wait.
+        hold.hold(2);
+        assert(speaker == 0 && writes == 3);
+        assert(hold.defer(true) && hold.defer(false) && speaker == 0);
+        hold.powered_up(t);
+        hold.hold(2);
+        assert(hold.holding() && writes == 3);
+        hold.powered_up(t + std::chrono::seconds(1));
+        hold.poll(t + std::chrono::milliseconds(1500));
+        assert(hold.holding());
+        hold.poll(t + std::chrono::seconds(2));
+        assert(!hold.holding() && speaker == 0 && writes == 3); // it waited for off: nothing to write
+        // Held while already off: turning it on waits too.
+        hold.hold(2);
+        assert(hold.holding() && writes == 3 && hold.defer(true));
+        hold.powered_up(t);
+        hold.poll(t + codec_settle);
+        assert(speaker == 1 && writes == 4 && hold.original() == 1);
+        hold.hold(2);
+        assert(speaker == 0 && writes == 5);
+    }
+    // Leaving while held: the switch as it was before the first hold.
+    assert(speaker == 1 && writes == 6);
+    speaker = 0; writes = 0;
+    {
+        SpeakerHold hold(io);
+        hold.hold(2);
+        assert(hold.holding() && writes == 0 && hold.original() == 0);
+    }
+    assert(speaker == 0 && writes == 0);
     return 0;
 }

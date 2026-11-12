@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #pragma once
+#include <chrono>
+#include <functional>
+#include <mutex>
 #include <string>
 
 // The ASoC codec behind a playback PCM, as the kernel shows it, so that the
@@ -20,6 +23,7 @@ inline constexpr unsigned codec_mclk_fs = 512;
 struct CodecLink {
     std::string dir;   // the link's sysfs directory, with pmdown_time and dapm_widget; empty when there is none
     std::string clock; // the file holding the codec's master clock rate; empty with no link
+    int card = -1;     // the sound card it belongs to
     bool found() const { return !dir.empty(); }
 };
 
@@ -48,4 +52,54 @@ public:
     ImmediatePowerDown& operator=(const ImmediatePowerDown&) = delete;
 private:
     std::string path, saved; // pmdown_time and what it held; empty when nothing was changed
+};
+
+// The built-in speaker's pin switch (the speaker amplifier's DAPM pin,
+// `simple-audio-card,pin-switches`), and how long the codec's outputs take to
+// settle after it leaves reset: the board's mute opens the jacks that long
+// after the codec powers up (`unmute-delay-ms`).
+inline constexpr const char* speaker_switch = "Builtin Speaker Switch";
+inline constexpr std::chrono::milliseconds codec_settle {1000};
+
+// Reads a card's speaker pin switch (1 on, 0 off, -1 when the card has none)
+// and writes it; speaker_switch_io() in drivers/mixer.h on the MPC.
+struct SwitchIo {
+    std::function<int(int card)> read;
+    std::function<bool(int card, bool on)> write;
+};
+
+// The built-in speaker while the codec powers up. Its amplifier
+// (`simple-audio-amplifier`, GPIO SPKR_EN) has no mute of its own: DAPM
+// enables it as soon as the DACs are up, some 20 ms after the codec leaves
+// reset while its outputs still settle, and the speaker plays that as a
+// click. So a stream that powers the codec up first holds the speaker: its
+// pin switch goes off, and it comes back (as it was, or as the app has asked
+// since) `settle` after the codec is up, as the board's mute opens for the
+// jacks. The thread opening the stream holds; HardwareMixer, on the service
+// thread, defers the app's changes and ends the hold. Safe from any thread.
+class SpeakerHold {
+public:
+    using Clock = std::chrono::steady_clock;
+    explicit SpeakerHold(SwitchIo io, Clock::duration settle = codec_settle);
+    ~SpeakerHold(); // still holding: the switch as it was before the first hold
+    SpeakerHold(const SpeakerHold&) = delete;
+    SpeakerHold& operator=(const SpeakerHold&) = delete;
+    // Before a stream powers up the codec on `card`: its speaker off now.
+    void hold(int card);
+    // Once that stream is prepared (or failed to open): the hold ends `settle` from `now`.
+    void powered_up(Clock::time_point now = Clock::now());
+    // While holding, a change to the switch waits for the end (true); false otherwise.
+    bool defer(bool on);
+    // A hold whose time has come ends, the speaker back on if that is what it waits for.
+    void poll(Clock::time_point now = Clock::now());
+    // The switch before the first hold (1 or 0), -1 before any: what leaving restores.
+    int original() const;
+    bool holding() const;
+private:
+    SwitchIo io;
+    Clock::duration settle;
+    mutable std::mutex lock;
+    int held_card = -1, resume = -1, first = -1; // what the switch goes back to; its value before the first hold
+    bool held = false, up = false;              // up: the codec is powered and `until` counts
+    Clock::time_point until {};
 };

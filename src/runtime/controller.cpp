@@ -18,8 +18,9 @@ using Clock = std::chrono::steady_clock;
 uint64_t monotonic_ns() { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()); }
 } // namespace
 
-Controller::Controller(App& app, bool required, UsbAudioOutput& usb, bool usb_rate)
+Controller::Controller(App& app, bool required, UsbAudioOutput& usb, bool usb_rate, SpeakerHold* speaker_hold)
     : app(app), surface_required(required), usb_output(usb), usb_rate_follows(usb_rate) {
+    mixer.attach(speaker_hold);
     catalog = {midi.json(), midi.outputs(), midi.open_ports()};
     require(!required || midi.has_surface(), "Control surface unavailable; use --no-surface only for a headless/host test");
 }
@@ -81,6 +82,7 @@ void Controller::record_surface_packets() {
 // Service thread. Platform requests that may block too long for the MIDI thread.
 void Controller::poll_platform(Session& session) {
     clock.poll(); services.poll();
+    mixer.poll(); // the speaker back once the codec has settled after powering up
     jacks.poll([&](const JackEvent& event) {
         session.jacks[unsigned(event.jack)].store(event.plugged ? 1 : 0);
         app.jack(event, hardware);

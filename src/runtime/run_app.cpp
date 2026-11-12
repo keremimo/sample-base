@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "runtime/run_app.h"
 #include "drivers/audio.h"
+#include "drivers/codec_power.h"
 #include "drivers/display.h"
+#include "drivers/mixer.h"
 #include "drivers/usb_audio.h"
 #include "drivers/usb_gadget.h"
 #include "runtime/control_socket.h"
@@ -43,12 +45,12 @@ void render(void* context, const AudioBlock& input, AudioBlock& output) {
 
 // The app's format, or the default when the device refuses it. Throws only
 // when the default fails too.
-std::unique_ptr<AudioDevice> open_audio(const Options& options, AudioFormat wanted) {
+std::unique_ptr<AudioDevice> open_audio(const Options& options, AudioFormat wanted, SpeakerHold& speaker) {
     if (wanted != AudioFormat {}) {
-        try { return std::make_unique<AudioDevice>(options.audio_output, options.audio_input, wanted); }
+        try { return std::make_unique<AudioDevice>(options.audio_output, options.audio_input, wanted, &speaker); }
         catch (const std::exception& error) { std::cerr << "Audio format refused, using 44100 Hz: " << error.what() << '\n'; }
     }
-    return std::make_unique<AudioDevice>(options.audio_output, options.audio_input);
+    return std::make_unique<AudioDevice>(options.audio_output, options.audio_input, AudioFormat {}, &speaker);
 }
 } // namespace
 
@@ -61,10 +63,13 @@ int run_app(App& app, const Options& options) {
     if (options.usb_output == "auto" && options.usb_stems)
         std::cout << "USB-C audio: " << describe(widen_uac2_playback(UsbAudioOutput::channels)) << std::endl;
     UsbAudioOutput usb_output; // Outlives the audio thread, which feeds it.
+    // The built-in speaker stays off while an audio device powers the codec up; the controller's mixer puts it
+    // back once the codec has settled. Outlives both.
+    SpeakerHold speaker_hold {speaker_switch_io()};
     AudioFormat requested = app.audio_format(); // Screen thread: what the app last asked for
-    auto audio = open_audio(options, requested);
+    auto audio = open_audio(options, requested, speaker_hold);
     usb_output.set_device_rate(audio->format().rate);
-    Controller controller(app, options.surface_required, usb_output, options.usb_output == "auto");
+    Controller controller(app, options.surface_required, usb_output, options.usb_output == "auto", &speaker_hold);
     ControlServer server(options.runtime);
     Session session;
     // The format open now, before any thread starts: the service thread sets the USB-C gadget's rate from it
@@ -85,7 +90,7 @@ int run_app(App& app, const Options& options) {
                 audio->run(session.running, session.failed, session.audio, render, &route, &session.audio_reopen);
                 if (!session.running.load()) break;
                 audio.reset();
-                try { audio = open_audio(options, app.audio_format()); }
+                try { audio = open_audio(options, app.audio_format(), speaker_hold); }
                 catch (const std::exception& error) {
                     std::cerr << error.what() << '\n';
                     session.failed.store(true); session.running.store(false); break;
@@ -136,9 +141,13 @@ int run_app(App& app, const Options& options) {
         session.running.store(false);
         if (audio_thread.joinable()) audio_thread.join();
         if (control_thread.joinable()) control_thread.join();
+        audio.reset();
         throw;
     }
     session.running.store(false); audio_thread.join(); control_thread.join();
+    // The codec powers down before the controller's mixer restores the speaker switch, so restoring it does
+    // not start the speaker's amplifier for the moment before.
+    audio.reset();
     std::cout << status_line(session, app, usb_output) << std::endl;
     return session.failed.load() ? 1 : 0;
 }

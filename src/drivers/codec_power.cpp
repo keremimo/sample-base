@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 
 namespace {
 // A sysfs or debugfs file's text (one page at most) without its trailing newline; empty when unreadable.
@@ -37,7 +38,7 @@ CodecLink codec_link(int card, const std::string& pcm_id, const std::string& sys
     if (card < 0 || link.empty() || link.find('/') != std::string::npos || link == "." || link == "..") return {};
     std::string dir = sys + "/class/sound/card" + std::to_string(card) + "/device/" + link;
     if (access((dir + "/pmdown_time").c_str(), W_OK) != 0) return {};
-    return {dir, clock};
+    return {dir, clock, card};
 }
 
 bool codec_powered(const CodecLink& link) {
@@ -72,4 +73,50 @@ ImmediatePowerDown::ImmediatePowerDown(const CodecLink& link) {
 
 ImmediatePowerDown::~ImmediatePowerDown() {
     if (!path.empty()) write_small(path, saved);
+}
+
+SpeakerHold::SpeakerHold(SwitchIo io, Clock::duration settle) : io(std::move(io)), settle(settle) {}
+
+SpeakerHold::~SpeakerHold() {
+    std::lock_guard<std::mutex> guard(lock);
+    if (held && first == 1 && io.write) io.write(held_card, true);
+}
+
+void SpeakerHold::hold(int card) {
+    std::lock_guard<std::mutex> guard(lock);
+    up = false;
+    if (held) return; // already off for an earlier power-up, and what it goes back to stays
+    int now = io.read ? io.read(card) : -1;
+    if (now < 0) return; // no speaker on this card
+    held = true; held_card = card; resume = now;
+    if (first < 0) first = now;
+    if (now == 1 && io.write) io.write(card, false);
+}
+
+void SpeakerHold::powered_up(Clock::time_point now) {
+    std::lock_guard<std::mutex> guard(lock);
+    if (held) { up = true; until = now + settle; }
+}
+
+bool SpeakerHold::defer(bool on) {
+    std::lock_guard<std::mutex> guard(lock);
+    if (held) resume = on ? 1 : 0;
+    return held;
+}
+
+void SpeakerHold::poll(Clock::time_point now) {
+    std::lock_guard<std::mutex> guard(lock);
+    if (!held || !up || now < until) return;
+    held = false;
+    if (resume == 1 && io.write) io.write(held_card, true);
+}
+
+int SpeakerHold::original() const {
+    std::lock_guard<std::mutex> guard(lock);
+    return first;
+}
+
+bool SpeakerHold::holding() const {
+    std::lock_guard<std::mutex> guard(lock);
+    return held;
 }
