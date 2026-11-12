@@ -83,4 +83,14 @@ fi
 for PMDOWN in /sys/class/sound/card*/device/*/pmdown_time; do
     if [ -w "$PMDOWN" ] && [ "$(cat "$PMDOWN" 2>/dev/null)" = 0 ]; then echo 5000 > "$PMDOWN" 2>/dev/null || true; fi
 done
+# sample-base drives the panel with its own module (kernel/panel,
+# src/drivers/panel_driver.h); one killed before it gave the panel back leaves
+# it there. The stock app needs st7796s.
+SPI=/sys/bus/spi/devices/spi3.0
+if [ -e "$SPI/driver_override" ] && [ "$(cat "$SPI/driver_override" 2>/dev/null)" = sample-base-panel ]; then
+    { echo spi3.0 > /sys/bus/spi/drivers/sample-base-panel/unbind; } 2>/dev/null || true
+    { echo > "$SPI/driver_override"; } 2>/dev/null || true
+    { [ -e "$SPI/driver" ] || echo spi3.0 > /sys/bus/spi/drivers/st7796s/bind; } 2>/dev/null || true
+fi
+rmmod sample_base_panel 2>/dev/null || true
 exec /bin/systemctl start ac50.service

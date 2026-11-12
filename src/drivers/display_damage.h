@@ -50,7 +50,8 @@ inline Rect joined(const Rect& a, const Rect& b) {
 // `now` and `was` are width x height ARGB frames, a row after another. Every
 // pixel that differs is in at least one rectangle; nothing else is promised
 // to be left out.
-inline std::vector<Rect> plan(const uint32_t* now, const uint32_t* was, int width, int height) {
+// Without `lines`, no cluster is cut into columns (the writes already run along the refresh).
+inline std::vector<Rect> plan(const uint32_t* now, const uint32_t* was, int width, int height, bool lines = true) {
     std::vector<Rect> bands;
     for (int y = 0; y < height; ++y) {
         if (!std::memcmp(now + size_t(y) * width, was + size_t(y) * width, size_t(width) * 4)) continue;
@@ -93,7 +94,7 @@ inline std::vector<Rect> plan(const uint32_t* now, const uint32_t* was, int widt
     struct Column { int x, y0, y1, gain; };
     std::vector<Column> line;
     for (const auto& r : rects) {
-        if (r.width() > line_width || r.height() < line_height || columns + r.width() > line_columns) { out.push_back(r); continue; }
+        if (!lines || r.width() > line_width || r.height() < line_height || columns + r.width() > line_columns) { out.push_back(r); continue; }
         columns += r.width();
         line.clear();
         for (int x = r.x0; x <= r.x1; ++x) {

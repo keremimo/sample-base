@@ -52,4 +52,15 @@ build/obj/$(notdir $(1:.c=.o)): $(1)
 	$$(CC) $$(CPPFLAGS) $$(CFLAGS) -c $$< -o $$@
 endef
 $(foreach m,$(MODULE_C),$(eval $(call c_module_rule,$(m))))
+# The panel's own driver (kernel/panel, docs/HARDWARE.md, Display), embedded
+# for src/drivers/panel_driver.cpp to load when tools/build_kernel_modules.sh
+# has built it; without it the panel stays on the stock driver.
+PANEL_MODULE ?= $(BASE_SRC)/../kernel/panel/sample_base_panel.ko
+ifneq ($(wildcard $(PANEL_MODULE)),)
+OBJECTS += build/obj/base/drivers/panel_module.o
+$(TARGET): build/obj/base/drivers/panel_module.o
+build/obj/base/drivers/panel_module.o: $(BASE_SRC)/drivers/panel_module.S $(PANEL_MODULE)
+	@mkdir -p $(@D)
+	$(CC) -c -DPANEL_MODULE='"$(PANEL_MODULE)"' $< -o $@
+endif
 -include $(OBJECTS:.o=.d)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "drivers/display.h"
 #include "drivers/display_damage.h"
+#include "drivers/panel_driver.h"
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <drm_mode.h>
@@ -22,22 +23,33 @@ Display::Display() {
         std::unique_ptr<drmModeRes, decltype(&drmModeFreeResources)> resources(nullptr, drmModeFreeResources);
         std::unique_ptr<drmModeConnector, decltype(&drmModeFreeConnector)> connector(nullptr, drmModeFreeConnector);
         drmModeModeInfo mode {};
-        for (unsigned index = 0; index < 16 && fd < 0; ++index) {
-            std::string path = "/dev/dri/card" + std::to_string(index);
-            int candidate = open(path.c_str(), O_RDWR | O_CLOEXEC);
-            if (candidate < 0) continue;
-            resources.reset(drmModeGetResources(candidate));
-            if (resources) for (int n = 0; n < resources->count_connectors && !connector; ++n) {
-                std::unique_ptr<drmModeConnector, decltype(&drmModeFreeConnector)> current(drmModeGetConnector(candidate, resources->connectors[n]), drmModeFreeConnector);
-                if (!current || current->connection != DRM_MODE_CONNECTED) continue;
-                for (int m = 0; m < current->count_modes; ++m) if (current->modes[m].hdisplay == 320 && current->modes[m].vdisplay == 240) {
-                    mode = current->modes[m]; connector = std::move(current); break;
+        // The panel's own driver when it takes (src/drivers/panel_driver.h): its portrait mode, its card just made.
+        native = panel_driver::take_over();
+        auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(native ? 2 : 0);
+        while (true) {
+            for (unsigned index = 0; index < 16 && fd < 0; ++index) {
+                std::string path = "/dev/dri/card" + std::to_string(index);
+                int candidate = open(path.c_str(), O_RDWR | O_CLOEXEC);
+                if (candidate < 0) continue;
+                resources.reset(drmModeGetResources(candidate));
+                if (resources) for (int n = 0; n < resources->count_connectors && !connector; ++n) {
+                    std::unique_ptr<drmModeConnector, decltype(&drmModeFreeConnector)> current(drmModeGetConnector(candidate, resources->connectors[n]), drmModeFreeConnector);
+                    if (!current || current->connection != DRM_MODE_CONNECTED) continue;
+                    for (int m = 0; m < current->count_modes; ++m) {
+                        const auto& found = current->modes[m];
+                        if ((found.hdisplay == 320 && found.vdisplay == 240) || (found.hdisplay == 240 && found.vdisplay == 320)) {
+                            mode = found; connector = std::move(current); break;
+                        }
+                    }
                 }
+                if (connector) fd = candidate;
+                else close(candidate);
             }
-            if (connector) fd = candidate;
-            else close(candidate);
+            if (fd >= 0 || std::chrono::steady_clock::now() >= give_up) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         check(fd >= 0 && bool(resources) && bool(connector), "Find MPC 320 x 240 panel");
+        portrait = mode.hdisplay == 240;
         check(drmSetMaster(fd) == 0, "Acquire display (stop stock app first)");
         uint32_t crtc = 0;
         for (int i = 0; i < connector->count_encoders && !crtc; ++i) {
@@ -51,10 +63,10 @@ Display::Display() {
         active_crtc = crtc; connector_id = connector->connector_id;
         previous = drmModeGetCrtc(fd, crtc);
         drm_mode_create_dumb create {};
-        create.width = 320; create.height = 240; create.bpp = 32;
+        create.width = mode.hdisplay; create.height = mode.vdisplay; create.bpp = 32;
         check(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) == 0, "Allocate screen buffer");
         handle = create.handle; pitch = create.pitch; bytes = create.size;
-        check(drmModeAddFB(fd, 320, 240, 24, 32, pitch, handle, &framebuffer) == 0, "Register screen buffer");
+        check(drmModeAddFB(fd, mode.hdisplay, mode.vdisplay, 24, 32, pitch, handle, &framebuffer) == 0, "Register screen buffer");
         drm_mode_map_dumb map {}; map.handle = handle;
         check(drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map) == 0, "Map screen buffer");
         pixels = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
@@ -123,17 +135,24 @@ void Display::push() {
     auto start = Clock::now();
     std::vector<display_damage::Rect> rects;
     if (first) rects.push_back({0, 0, width - 1, height - 1});
-    else rects = display_damage::plan(pending.data(), shown.data(), width, height);
+    else rects = display_damage::plan(pending.data(), shown.data(), width, height, !portrait); // portrait writes run along the refresh already
     if (rects.empty()) return;
     uint64_t count = 0;
     for (const auto& rect : rects) {
         size_t span = size_t(rect.width()) * 4;
+        // Portrait (the panel's own driver): the screen's column x is the buffer's row x, its row y the column y.
+        if (portrait)
+            for (int x = rect.x0; x <= rect.x1; ++x) {
+                auto* row = reinterpret_cast<uint32_t*>(static_cast<char*>(pixels) + size_t(x) * pitch);
+                for (int y = rect.y0; y <= rect.y1; ++y) row[y] = pending[size_t(y) * width + x];
+            }
         for (int y = rect.y0; y <= rect.y1; ++y) {
             const uint32_t* source = pending.data() + y * width + rect.x0;
-            memcpy(static_cast<char*>(pixels) + size_t(y) * pitch + size_t(rect.x0) * 4, source, span);
+            if (!portrait) memcpy(static_cast<char*>(pixels) + size_t(y) * pitch + size_t(rect.x0) * 4, source, span);
             memcpy(shown.data() + y * width + rect.x0, source, span);
         }
-        drmModeClip clip {uint16_t(rect.x0), uint16_t(rect.y0), uint16_t(rect.x1 + 1), uint16_t(rect.y1 + 1)};
+        drmModeClip clip = portrait ? drmModeClip {uint16_t(rect.y0), uint16_t(rect.x0), uint16_t(rect.y1 + 1), uint16_t(rect.x1 + 1)}
+                                    : drmModeClip {uint16_t(rect.x0), uint16_t(rect.y0), uint16_t(rect.x1 + 1), uint16_t(rect.y1 + 1)};
         check(drmModeDirtyFB(fd, framebuffer, &clip, 1) == 0, "Flush screen");
         count += uint64_t(rect.area());
     }
@@ -164,5 +183,7 @@ void Display::release() {
     if (handle) { drm_mode_destroy_dumb destroy {}; destroy.handle = handle; drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy); }
     if (fd >= 0) { drmDropMaster(fd); close(fd); }
     pixels = nullptr; framebuffer = handle = 0; fd = -1;
+    if (native) panel_driver::give_back();
+    native = false;
 }
 Display::~Display() { release(); }

@@ -16,9 +16,12 @@
 // push: present() hands it a frame and returns, and waits first only while
 // the previous frame is still going out. The screen thread therefore draws
 // one frame while the panel receives the last, at whatever rate the panel
-// takes. Only what changed is sent, in the rectangles and order of
-// display_damage::plan(): a moving line a column at a time, so the panel's own
-// refresh (a screen column at a time) never shows it broken.
+// takes. Only what changed is sent, in the rectangles of
+// display_damage::plan(). The panel refreshes a screen column at a time; on
+// its own driver (src/drivers/panel_driver.h, kernel/panel) the buffer is
+// portrait, the screen turned, so every write runs along the refresh and a
+// moving line is never seen broken. On the stock driver, should that not
+// load, a moving line goes a column at a time instead.
 class Display {
 public:
     static constexpr int width = 320, height = 240;
@@ -46,6 +49,8 @@ private:
     uint32_t active_crtc = 0, connector_id = 0;
     drmModeCrtc* previous = nullptr;
     bool changed = false;
+    bool native = false;   // the panel on its own driver (src/drivers/panel_driver.h), to give back
+    bool portrait = false; // its 240 x 320 mode: the buffer is the screen turned (push())
     void* pixels = nullptr;
 
     // Worker hand-off: `pending` is the next frame, `shown` what the panel holds.
