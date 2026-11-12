@@ -107,6 +107,35 @@ class RecoveryScriptTests(unittest.TestCase):
                     self.assertEqual(calls.read_text().strip(), "start ac50.service")
 
 
+    def test_panel_given_back_to_stock_driver_before_stock(self):
+        source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            systemctl = root / "systemctl"
+            systemctl.write_text('#!/bin/sh\nif [ "$1" = is-system-running ]; then echo running; exit 0; fi\n'
+                                 'cat "$FIXTURE_ROOT/spi/drivers/st7796s/bind" > "$FIXTURE_ROOT/at-start"\n')
+            rmmod = root / "rmmod"
+            rmmod.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_ROOT/rmmod"\n')
+            for tool in (systemctl, rmmod):
+                tool.chmod(0o755)
+            spi = root / "spi"
+            device = spi / "devices/spi3.0"
+            device.mkdir(parents=True)
+            (device / "driver_override").write_text("sample-base-panel\n")
+            for driver in ("sample-base-panel", "st7796s"):
+                (spi / "drivers" / driver).mkdir(parents=True)
+                for name in ("bind", "unbind"):
+                    (spi / "drivers" / driver / name).write_text("")
+            script = root / "restore.sh"
+            script.write_text(source.replace("/bin/systemctl", shlex.quote(str(systemctl)))
+                              .replace("/sys/bus/spi", str(spi)).replace("rmmod ", shlex.quote(str(rmmod)) + " ")
+                              .replace("/sys/kernel/config/usb_gadget", str(root / "none")))
+            subprocess.run(["sh", str(script)], check=True, env={**os.environ, "FIXTURE_ROOT": temp})
+            self.assertEqual((spi / "drivers/sample-base-panel/unbind").read_text(), "spi3.0\n")
+            self.assertEqual((device / "driver_override").read_text(), "\n")
+            self.assertEqual((root / "at-start").read_text(), "spi3.0\n")
+            self.assertEqual((root / "rmmod").read_text(), "sample_base_panel\n")
+
     def test_gadget_mask_restored_before_stock(self):
         source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
         with tempfile.TemporaryDirectory() as temp:
