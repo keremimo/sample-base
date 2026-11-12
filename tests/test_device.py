@@ -27,13 +27,14 @@ def fake_mpc(calls, free_kb=864608, active=ACTIVE_RELEASE, fail=None):
 
 
 class ReleaseCleanupTests(unittest.TestCase):
-    def test_only_stage_releases_other_than_the_active_one(self):
+    def test_releases_other_than_the_active_one(self):
         self.assertEqual(stale_releases(RUN_NAMES, ACTIVE_RELEASE),
-                         ["/run/sample-base-release-2e98caf725ed", "/run/sample-base-release-b62e9b609711"])
+                         ["/run/sample-base-release-2e98caf725ed", "/run/sample-base-release-b62e9b609711",
+                          "/run/sample-base-release-sdadc1aeff3b4d"])
 
     def test_near_misses_are_kept(self):
-        names = ["sample-base-release-sdadc1aeff3b4d",   # the SD boot's
-                 "sample-base-release-sd0123456789",     # SD, 12 characters after the prefix
+        names = ["sample-base-release-sd0123456789",     # SD, 12 characters after the prefix
+                 "sample-base-release-sdabcdef0123456", "sample-base-release-SDadc1aeff3b4d",
                  "sample-base-release-ABCDEF012345", "sample-base-release-abcdef01234",
                  "sample-base-release-abcdef0123456", "sample-base-release-abcdef01234g",
                  "sample-base-release-abcdef012345.old", " sample-base-release-abcdef012345",
@@ -58,7 +59,7 @@ class ReleaseCleanupTests(unittest.TestCase):
                 patch.object(device, "run", side_effect=fake_mpc(calls)):
             device.start(app="melodee")
         removals = [command for command in calls if command.startswith("rm ")]
-        self.assertEqual(removals, ["rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711"])
+        self.assertEqual(removals, ["rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711 /run/sample-base-release-sdadc1aeff3b4d"])
         self.assertGreater(calls.index(removals[0]), calls.index("/run/sample-base/sample-base --ctl status"))
 
     def test_cleanup_skipped_when_active_link_is_elsewhere(self):
@@ -70,7 +71,7 @@ class ReleaseCleanupTests(unittest.TestCase):
 
     def test_failed_cleanup_keeps_the_app_running(self):
         device, calls = Device(), []
-        failing = "rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711"
+        failing = "rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711 /run/sample-base-release-sdadc1aeff3b4d"
         with patch.object(device, "stage", return_value=ACTIVE_RELEASE), \
                 patch.object(device, "run", side_effect=fake_mpc(calls, fail=failing)):
             device.start()
@@ -93,7 +94,7 @@ class ReleaseCleanupTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as raised:
                     device.stage()
         self.assertIn("Only 40 MB free on the MPC's /run", str(raised.exception))
-        self.assertIn("rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711",
+        self.assertIn("rm -r /run/sample-base-release-2e98caf725ed /run/sample-base-release-b62e9b609711 /run/sample-base-release-sdadc1aeff3b4d",
                       str(raised.exception))
         self.assertFalse(any(command.startswith(("mkdir", "rm")) for command in calls))
         transfer.assert_not_called()

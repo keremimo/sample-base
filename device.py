@@ -20,9 +20,9 @@ SWAP_DROPIN_DIR = UNIT_PATH + ".d"
 SWAP_DROPIN = SWAP_DROPIN_DIR + "/swap.conf"
 ACTIVE = "/run/sample-base"
 RELEASE_PREFIX = "/run/sample-base-release-"
-# The releases stage() makes. The SD boot's own (install/sd-worker.sh) is
-# sample-base-release-sd<12 hex digits> and never matches.
-RELEASE_NAME = re.compile(r"sample-base-release-[0-9a-f]{12}")
+# Release folders in /run: stage() makes sample-base-release-<12 hex digits>,
+# install/sd-worker.sh makes sample-base-release-sd<12 hex digits>.
+RELEASE_NAME = re.compile(r"sample-base-release-(sd)?[0-9a-f]{12}")
 # Room to keep on /run (RAM) beyond the staged files: systemd refuses
 # daemon-reload with under 16 MiB free there; the self-test WAV is ~1 MB.
 RUN_HEADROOM = 32 << 20
@@ -72,8 +72,8 @@ def valid_app_name(app):
 
 
 def stale_releases(names, active):
-    """The /run paths to remove: stage()'s releases among the names in /run,
-    except the active one."""
+    """The /run paths to remove: every release folder among the names in
+    /run (from stage() or an SD boot) except the active one."""
     if not active.startswith(RELEASE_PREFIX) or not active.removeprefix(RELEASE_PREFIX).isalnum():
         raise ValueError("No active release to keep: " + repr(active))
     keep = active.removeprefix("/run/")

@@ -149,8 +149,7 @@ ready() {
 }
 
 # Removes every release in /run except the running one: the previous app's
-# and any left by earlier starts or SD boots (device.py start keeps SD boot
-# releases).
+# and any left by earlier starts or SD boots.
 drop_stale() {
     keep=$(readlink "$ACTIVE" 2>/dev/null || true)
     for release in "$RUN"/sample-base-release-*; do
