@@ -53,8 +53,9 @@ build/obj/$(notdir $(1:.c=.o)): $(1)
 endef
 $(foreach m,$(MODULE_C),$(eval $(call c_module_rule,$(m))))
 # The panel's own driver (kernel/panel, docs/HARDWARE.md, Display), embedded
-# for src/drivers/panel_driver.cpp to load when tools/build_kernel_modules.sh
-# has built it; without it the panel stays on the stock driver.
+# for src/drivers/panel_driver.cpp to load. The module is kept beside its
+# source (tools/build_kernel_modules.sh rebuilds it); a build without it keeps
+# the panel on the stock driver.
 PANEL_MODULE ?= $(BASE_SRC)/../kernel/panel/sample_base_panel.ko
 ifneq ($(wildcard $(PANEL_MODULE)),)
 OBJECTS += build/obj/base/drivers/panel_module.o

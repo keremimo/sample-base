@@ -34,3 +34,4 @@ private/
 !/AGENTS.md
 dist/
 *.ko
+!/kernel/*/*.ko

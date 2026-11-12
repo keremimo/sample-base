@@ -29,6 +29,16 @@ DOC_IMAGE = re.compile(rb'(?:^|/)docs/images/.+\.(?:png|jpe?g|gif|webp)$', re.IG
 IMAGE_HEADS = (b'\x89PNG\r\n\x1a\n', b'\xff\xd8\xff', b'GIF87a', b'GIF89a')
 
 
+# A kernel module is binary too: allowed as an ELF object under kernel/<name>/
+# beside the C source it is built from (tools/build_kernel_modules.sh), still
+# under the size limit and scanned like any other file.
+KERNEL_MODULE = re.compile(rb'(?:^|/)kernel/[^/]+/[^/]+\.ko$')
+
+
+def kernel_module(name, data, indexed):
+    return bool(KERNEL_MODULE.search(name)) and data.startswith(b'\x7fELF') and name[:-3] + b'.c' in indexed
+
+
 def doc_image(name, data):
     if not DOC_IMAGE.search(name):
         return False
@@ -75,7 +85,7 @@ def main():
             errors.append((name, 'file exceeds source-only size limit'))
             continue
         data = git('-C', str(root), 'cat-file', 'blob', blob.decode())
-        if b'\0' in data and not doc_image(name, data):
+        if b'\0' in data and not doc_image(name, data) and not kernel_module(name, data, indexed):
             errors.append((name, 'binary data is not source text'))
         for reason, pattern in PATTERNS.items():
             if pattern.search(data):

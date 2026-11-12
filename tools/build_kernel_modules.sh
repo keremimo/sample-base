@@ -1,8 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
 # Builds kernel/panel/sample_base_panel.ko against the MPC Sample's kernel
-# (6.12.60-imb, PREEMPT_RT) and leaves it beside its source, where the build
-# embeds it (src/drivers/panel_module.S). Needs inMusic's kernel source in
+# (6.12.60-imb, PREEMPT_RT) and leaves it beside its source, where it is kept
+# in Git (tools/check_private_files.py lets a module by its source through)
+# and the build embeds it (src/drivers/panel_module.S). Run it after changing
+# the source, and commit both. Needs inMusic's kernel source in
 # .local/kbuild/kernel-source (its public release) and the MPC's
 # /proc/config.gz as .local/mpc-kernel.config; the tree is prepared once.
 set -eu
