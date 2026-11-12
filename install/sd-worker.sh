@@ -16,8 +16,11 @@ ID=$(tr -d '-' < /proc/sys/kernel/random/uuid | cut -c 1-12)
 case "$ID" in ''|*[!0-9a-f]*) echo 'No id for the RAM folder' >&2; exit 1 ;; esac
 RELEASE=/run/sample-base-release-sd$ID
 mkdir -m 700 "$RELEASE"
-cp "$DIR/sample-base" "$DIR/restore-stock.sh" "$RELEASE/"
-(cd "$DIR" && sha256sum sample-base restore-stock.sh) | (cd "$RELEASE" && sha256sum -c -)
+# Copy the binary, the recovery script and, if the release has it, sd-update.sh.
+FILES="sample-base restore-stock.sh"
+[ ! -f "$DIR/sd-update.sh" ] || FILES="$FILES sd-update.sh"
+(cd "$DIR" && cp $FILES "$RELEASE/")
+(cd "$DIR" && sha256sum $FILES) | (cd "$RELEASE" && sha256sum -c -)
 chmod 755 "$RELEASE/sample-base"
 "$RELEASE/sample-base" --self-test "$RELEASE/test.wav" || { echo 'Self-test failed; stock left running' >&2; exit 1; }
 OPTION=""

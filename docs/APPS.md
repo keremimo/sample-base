@@ -156,6 +156,48 @@ itself. The system demo (`src/demos/system/`) reads all of these.
   events, in `session()` for every thread, `jack()` on each change and the
   `jacks` command. Nothing is rerouted unless the app does it.
 
+## Updates from the card
+
+An app can install its own updates: the user copies the new release zip,
+unchanged, to the top folder of the SD card, and the app offers to install
+it. `install/sd-update.sh` does the install; `drivers/sd_update.h` has the
+functions the app calls. `device.py start` and the SD boot copy the script
+next to the binary.
+
+- **Release zip:** the release (`autorun/` only, as `tools/make_release.py`
+  makes it) plus `autorun/<package>/RELEASE.sha256`, which lists the
+  SHA-256 of every other file in the zip, and `RELEASE.sha256.sig`, an
+  Ed25519 signature of that list (`openssl pkeyutl -sign -rawin`). The app
+  contains the public key and passes it to the script as a PEM file.
+- **Finding an update:** `sd_update::find()` runs the script's `check` on
+  each `*.zip` in the card's top folder. It returns the newest zip with a
+  valid signature and a VERSION newer than the app's
+  (`compare_versions()`: a pre-release is older than its release, a git
+  describe version is newer). Call it from the service thread when the
+  card is mounted or returned from a computer.
+- **Installing:** `sd_update::start()` runs the script's `install` as the
+  systemd unit `sample-base-update`. The script verifies the signature
+  before it reads any other file, and extracts only the listed files,
+  checking each one. It runs the new binary's self-test in RAM, then
+  copies the package to the card next to the current one (which is kept
+  as `<package>.prev`) and replaces the autorun files. It does not change
+  a card whose `autorun.sh` starts a different package. It stops the
+  running app without starting the stock app and starts the new app from
+  the card, as at boot. If the new app does not answer `--ctl status`
+  within 30 seconds, the script restores the card and restarts the
+  previous app. After a successful install it deletes the zip and removes
+  every other `sample-base-release-*` folder from `/run`.
+- **Status:** the script writes `state=` (checking, writing, starting,
+  done, failed), `version=` and `error=` to `/run/sample-base-update.status`;
+  read it with `sd_update::read_status()`. The old app reads it until it
+  is stopped; the new app reads `done` after it starts, or the previous
+  app reads `failed` after a rollback. Save unsaved work before calling
+  `start()`.
+- **Tests:** `tests/test_sd_update.py` runs the script against a fake card
+  and systemctl with a test key. It needs OpenSSL 3, `unzip` and
+  `sha256sum` on the host; it is skipped in the build image, which has no
+  `unzip`.
+
 ## Timed MIDI out
 
 External MIDI arrives with the kernel's receive time in
