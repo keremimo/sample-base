@@ -385,10 +385,11 @@ struct ScreenMirror::Worker {
 
     // ---- Pictures ----
 
-    // How the stream went over the last few seconds, in the service log while streaming: pictures sent and made
-    // (the screen changed), what making one cost, timer ticks with no buffer back from the computer yet or missed
-    // while a picture was being made, buffers the kernel gave back marked bad (dropped on the way), and the
-    // longest wait between two buffers coming back.
+    // How the stream went, in the service log when a stream ends and for any five seconds that went wrong (ticks
+    // late or missed, buffers bad, fewer pictures than the rate): pictures sent and made (the screen changed),
+    // what making one took, timer ticks with no buffer back from the computer yet or missed while this thread was
+    // busy, buffers the kernel gave back marked bad (dropped on the way), and the longest wait between two
+    // buffers coming back.
     struct Window {
         Clock::time_point start = Clock::now(), last_back;
         unsigned sent = 0, made = 0, late = 0, missed = 0, bad = 0;
@@ -404,7 +405,8 @@ struct ScreenMirror::Worker {
         window.made = made_count.exchange(0);
         window.make_ms = made_us.exchange(0) / 1000.0;
         window.make_max_ms = made_max_us.exchange(0) / 1000.0;
-        if (window.sent || window.late || window.missed) {
+        bool trouble = window.late || window.missed || window.bad || window.sent + 1 < unsigned(seconds * format.fps * 0.98);
+        if ((force || trouble) && (window.sent || window.late || window.missed)) {
             char line[320];
             std::snprintf(line, sizeof line, "Screen mirror: %.1f s %ux%u %u fps: %u sent (%.1f fps), %u made (%.1f ms, max %.1f), "
                           "%u late, %u missed ticks, %u bad, longest gap %.0f ms, %zu kB a picture",

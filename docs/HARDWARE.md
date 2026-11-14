@@ -451,9 +451,13 @@ screen's own time however unevenly the screen thread drew them or the
 maker made them, and a picture that costs more than a frame to make never
 holds a tick up; with nothing new the last picture goes again. The cost is
 those two frames of delay and four kept pictures. `status` and the service
-log (every five seconds while streaming: pictures sent and made, what
-making one took, ticks with no buffer back, buffers the kernel marked bad,
-the longest gap) say how it goes.
+log (when a stream ends, and for any five seconds that went wrong: pictures
+sent and made, what making one took, ticks with no buffer back, buffers
+the kernel marked bad, the longest gap) say how it goes. Measured with a
+project playing (2026-11-14): 1280 × 960 at 60 fps sent 60.0 pictures a
+second, each made 16 ms after the screen was drawn (21 at most), 81 kB a
+picture, no tick late, the longest gap between buffers 19 ms, no audio
+dropouts.
 
 **USB bandwidth.** USB 2.0 keeps 6000 bytes of each 125 µs microframe for
 isochronous and interrupt endpoints, booked when a stream starts. The
