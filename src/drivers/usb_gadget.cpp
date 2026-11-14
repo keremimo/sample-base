@@ -8,11 +8,17 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <sstream>
 #include <sys/stat.h>
 #include <vector>
 
 namespace {
+// The service thread (rate, card share) and Screen Mirror's thread both
+// relink the gadget: one change at a time. Recursive: a failed drive offer
+// takes the drive out again with gadget_remove_storage().
+std::recursive_mutex relinking;
+
 // A directory's entries in readdir order, which configfs gives newest first.
 std::vector<std::string> unsorted(const std::string& directory) {
     std::vector<std::string> names;
@@ -150,6 +156,7 @@ bool save_original(const std::string& function, const std::string& saved, std::s
 } // namespace
 
 GadgetChange widen_uac2_playback(unsigned channels, const std::string& root, const std::string& saved) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
     GadgetChange change;
     if (channels < 1 || channels > 27) { change.result = GadgetChange::Result::Failed; change.error = "1 to 27 channels"; return change; }
     std::string gadget;
@@ -183,6 +190,7 @@ GadgetChange widen_uac2_playback(unsigned channels, const std::string& root, con
 }
 
 GadgetChange set_uac2_rate(unsigned rate, const std::string& root, const std::string& saved) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
     GadgetChange change;
     change.rate = true; change.after = rate;
     if (rate < 8000 || rate > 192000) { change.result = GadgetChange::Result::Failed; change.error = "8 to 192 kHz"; return change; }
@@ -216,6 +224,7 @@ GadgetChange set_uac2_rate(unsigned rate, const std::string& root, const std::st
 }
 
 bool gadget_add_storage(const std::string& medium, std::vector<std::string>& order, std::string& error, const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
     std::string gadget, config, udc;
     if (!first_gadget(root, gadget, config)) { error = "no USB gadget"; return false; }
     if (!read_line(gadget + "/UDC", udc)) { error = gadget + "/UDC unreadable"; return false; }
@@ -238,9 +247,14 @@ bool gadget_add_storage(const std::string& medium, std::vector<std::string>& ord
     // high-speed bulk packet: the drive's bulk IN there never sends a
     // block. NCM's notify endpoint (16-byte packets) fits it, so the
     // network function goes after the drive; the audio and MIDI interfaces
-    // keep their numbers.
+    // keep their numbers. Screen Mirror's webcam steps out (its endpoint
+    // would be the seventh, which has no FIFO at all) and comes back with
+    // gadget_remove_storage(), named in `order`.
     std::vector<Link> wanted, network;
-    for (const auto& link : links) (link_name(link).rfind("ncm.", 0) == 0 ? network : wanted).push_back(link);
+    for (const auto& link : links) {
+        if (link_name(link).rfind("uvc.", 0) == 0) continue;
+        (link_name(link).rfind("ncm.", 0) == 0 ? network : wanted).push_back(link);
+    }
     wanted.push_back({config + "/" + card_function, function});
     wanted.insert(wanted.end(), network.begin(), network.end());
     if (rebind(gadget, udc, links, [](std::string&) { return true; }, error, &wanted)) return true;
@@ -274,6 +288,7 @@ GadgetEject gadget_eject_storage(bool force, std::string& error, const std::stri
 }
 
 bool gadget_remove_storage(const std::vector<std::string>& order, std::string& error, const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
     std::string gadget, config, udc;
     if (!first_gadget(root, gadget, config)) return true;
     std::string function = gadget + "/functions/" + card_function;
@@ -282,16 +297,160 @@ bool gadget_remove_storage(const std::vector<std::string>& order, std::string& e
     auto links = function_links(gadget);
     bool linked = std::any_of(links.begin(), links.end(), [&](const Link& link) { return link.target == function; });
     if (linked) {
-        // Back in the order before the drive came (what is not named keeps its place after).
+        // Back in the order before the drive came (what is not named keeps its place after). A function the drive
+        // put out (Screen Mirror's webcam) comes back when it still exists.
         std::vector<Link> wanted;
-        for (const auto& name : order)
+        for (const auto& name : order) {
+            bool found = false;
             for (const auto& link : links)
-                if (link_name(link) == name && link.target != function) wanted.push_back(link);
+                if (link_name(link) == name && link.target != function) { wanted.push_back(link); found = true; }
+            std::string target = gadget + "/functions/" + name;
+            if (!found && name != card_function && exists(target)) wanted.push_back({config + "/" + name, target});
+        }
         for (const auto& link : links)
             if (link.target != function && std::none_of(wanted.begin(), wanted.end(), [&](const Link& w) { return w.path == link.path; }))
                 wanted.push_back(link);
         if (!rebind(gadget, udc, links, [](std::string&) { return true; }, error, &wanted)) return false;
     }
+    if (rmdir(function.c_str()) != 0 && errno != ENOENT) { error = function + ": " + std::strerror(errno); return false; }
+    return true;
+}
+
+namespace {
+// configfs makes a function's default groups itself (control/header,
+// streaming/uncompressed...): mkdir finds them there (EEXIST) and makes the
+// rest, also in a test's plain folder.
+bool make_dirs(const std::string& path, std::string& error) {
+    for (size_t at = 1; at != std::string::npos;) {
+        at = path.find('/', at + 1);
+        std::string part = path.substr(0, at);
+        if (mkdir(part.c_str(), 0755) != 0 && errno != EEXIST) { error = part + ": " + std::strerror(errno); return false; }
+    }
+    return true;
+}
+
+// An attribute (O_CREAT: configfs has the file already; a test's folder gets it).
+bool put(const std::string& path, const std::string& text, std::string& error) {
+    return write_text(path, text, error, O_WRONLY | O_TRUNC | O_CREAT);
+}
+
+// A function's folder, its links first: alphabetical order takes each
+// folder's class/ links out before the header/ they point at, and header/'s
+// own link before the format. configfs refuses to remove its default groups
+// and attribute files (they go with the function's own rmdir), a test's
+// plain folder lets them go.
+void remove_tree(const std::string& dir) {
+    for (const auto& name : entries(dir)) {
+        std::string path = dir + "/" + name;
+        struct stat info;
+        if (lstat(path.c_str(), &info) != 0) continue;
+        if (S_ISLNK(info.st_mode) || S_ISREG(info.st_mode)) unlink(path.c_str());
+        else if (S_ISDIR(info.st_mode)) { remove_tree(path); rmdir(path.c_str()); }
+    }
+}
+
+bool storage_linked(const std::vector<Link>& links) {
+    return std::any_of(links.begin(), links.end(), [](const Link& link) { return link_name(link) == card_function; });
+}
+
+// The webcam function for one picture size, unlinked (kernel/uvc's
+// configfs: Documentation/usb/gadget-uvc.rst). No interrupt endpoint; the
+// streaming endpoint's packets are 1024 bytes, one a microframe (8 MB/s):
+// 320 x 240 YUYV at 30 fps is 4.6 MB/s, a 1280 x 960 MJPEG frame of the
+// screen about 120 kB.
+bool make_mirror(const std::string& function, const MirrorFormat& format, std::string& error) {
+    unsigned frame_bytes = format.mjpeg ? format.width * format.height : format.width * format.height * 2;
+    std::string kind = format.mjpeg ? "mjpeg" : "uncompressed", short_name = format.mjpeg ? "m" : "u";
+    std::string control = function + "/control", streaming = function + "/streaming";
+    std::string picture = streaming + "/" + kind + "/" + short_name, frame = picture + "/f";
+    std::string bits = std::to_string(uint64_t(frame_bytes) * 8 * 30);
+    bool ok = make_dirs(function, error) && put(function + "/streaming_maxpacket", "1024\n", error) &&
+              put(function + "/streaming_interval", "1\n", error) && put(function + "/function_name", "MPC Sample Screen\n", error) &&
+              make_dirs(control + "/header/h", error) && make_dirs(control + "/class/fs", error) && make_dirs(control + "/class/ss", error) &&
+              make_dirs(frame, error) && put(frame + "/wWidth", std::to_string(format.width) + "\n", error) &&
+              put(frame + "/wHeight", std::to_string(format.height) + "\n", error) &&
+              put(frame + "/dwMinBitRate", bits + "\n", error) && put(frame + "/dwMaxBitRate", bits + "\n", error) &&
+              put(frame + "/dwMaxVideoFrameBufferSize", std::to_string(frame_bytes) + "\n", error) &&
+              put(frame + "/dwDefaultFrameInterval", "333333\n", error) && put(frame + "/dwFrameInterval", "333333\n", error) &&
+              make_dirs(streaming + "/header/h", error);
+    for (const char* speed : {"fs", "hs", "ss"}) ok = ok && make_dirs(streaming + "/class/" + speed, error);
+    auto link = [&](const std::string& target, const std::string& path) {
+        if (ok && symlink(target.c_str(), path.c_str()) != 0) { ok = false; error = path + ": " + std::strerror(errno); }
+    };
+    link(picture, streaming + "/header/h/" + short_name);
+    for (const char* speed : {"fs", "hs", "ss"}) link(streaming + "/header/h", streaming + "/class/" + speed + "/h");
+    for (const char* speed : {"fs", "ss"}) link(control + "/header/h", control + "/class/" + speed + "/h");
+    return ok;
+}
+
+// What the function was made for, read back from its frame.
+bool mirror_made_for(const std::string& function, const MirrorFormat& format) {
+    std::string frame = function + (format.mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height;
+    return read_line(frame + "/wWidth", width) && read_line(frame + "/wHeight", height) &&
+           width == std::to_string(format.width) && height == std::to_string(format.height);
+}
+} // namespace
+
+MirrorLink gadget_add_mirror(const MirrorFormat& format, std::string& error, const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
+    std::string gadget, config, udc;
+    if (!first_gadget(root, gadget, config)) { error = "no USB gadget"; return MirrorLink::Failed; }
+    if (!read_line(gadget + "/UDC", udc)) { error = gadget + "/UDC unreadable"; return MirrorLink::Failed; }
+    std::string function = gadget + "/functions/" + mirror_function;
+    auto links = function_links(gadget);
+    if (storage_linked(links)) return MirrorLink::CardShared;
+    bool linked = std::any_of(links.begin(), links.end(), [&](const Link& link) { return link.target == function; });
+    if (linked && mirror_made_for(function, format)) return MirrorLink::Linked;
+    // Another size: configfs takes no change while the function is linked, so out with it and made anew.
+    if (linked && !gadget_remove_mirror(error, root)) return MirrorLink::Failed;
+    if (exists(function)) { remove_tree(function); rmdir(function.c_str()); }
+    links = function_links(gadget);
+    if (!make_mirror(function, format, error)) {
+        remove_tree(function); rmdir(function.c_str());
+        return MirrorLink::Failed;
+    }
+    // After the UAC2 function (its interface numbers, by which macOS knows
+    // the audio device, stay), the network function last: the controller
+    // hands IN endpoints out in link order and its sixth FIFO (336 bytes)
+    // fits only NCM's notify endpoint (gadget_add_storage()).
+    Link webcam {config + "/" + mirror_function, function};
+    std::vector<Link> wanted, network;
+    bool placed = false;
+    for (const auto& link : links) {
+        if (link_name(link).rfind("ncm.", 0) == 0) { network.push_back(link); continue; }
+        wanted.push_back(link);
+        if (!placed && link_name(link).rfind("uac2.", 0) == 0) { wanted.push_back(webcam); placed = true; }
+    }
+    if (!placed) wanted.insert(wanted.begin(), webcam);
+    wanted.insert(wanted.end(), network.begin(), network.end());
+    if (rebind(gadget, udc, links, [](std::string&) { return true; }, error, &wanted)) return MirrorLink::Linked;
+    remove_tree(function); rmdir(function.c_str());
+    return MirrorLink::Failed;
+}
+
+bool gadget_mirror_linked(const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(relinking); // never halfway through another thread's relink
+    std::string gadget, config;
+    if (!first_gadget(root, gadget, config)) return false;
+    std::string function = gadget + "/functions/" + mirror_function;
+    auto links = function_links(gadget);
+    return std::any_of(links.begin(), links.end(), [&](const Link& link) { return link.target == function; });
+}
+
+bool gadget_remove_mirror(std::string& error, const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
+    std::string gadget, config, udc;
+    if (!first_gadget(root, gadget, config)) return true;
+    std::string function = gadget + "/functions/" + mirror_function;
+    if (!exists(function)) return true;
+    if (!read_line(gadget + "/UDC", udc)) { error = gadget + "/UDC unreadable"; return false; }
+    auto links = function_links(gadget);
+    if (std::any_of(links.begin(), links.end(), [&](const Link& link) { return link.target == function; })) {
+        std::vector<Link> wanted;
+        for (const auto& link : links) if (link.target != function) wanted.push_back(link);
+        if (!rebind(gadget, udc, links, [](std::string&) { return true; }, error, &wanted)) return false;
+    }
+    remove_tree(function);
     if (rmdir(function.c_str()) != 0 && errno != ENOENT) { error = function + ": " + std::strerror(errno); return false; }
     return true;
 }

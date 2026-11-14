@@ -2,6 +2,7 @@
 #pragma once
 #include "drivers/audio.h"
 #include "drivers/hardware_midi.h"
+#include "drivers/screen_mirror.h"
 #include "runtime/session.h"
 #include "surface/controls.h"
 #include "surface/leds.h"
@@ -104,6 +105,13 @@ public:
     // Audio thread, before the first render() of each opened device: the
     // format it runs in (rate, and the frames queued ahead of the jacks).
     virtual void audio_opened(const AudioFormat&) {}
+    // Any thread: whether the screen is offered to a computer as a USB webcam
+    // and at which size (drivers/screen_mirror.h; ScreenMirror::widths and
+    // heights list the sizes). The runtime acts on a change within a frame or
+    // two; turning it on or off, or another size, rebinds the USB gadget.
+    // session().mirror says how it goes. Apps that never override it have
+    // no webcam (a webcam an earlier app left is taken out).
+    virtual ScreenMirrorMode screen_mirror() const { return {}; }
     // Audio thread, right after each render(): that block's stems, one mono
     // channel per track, which a computer records over USB-C beside the main
     // mix (channels 3 to 18), or null for silence there. The app owns the

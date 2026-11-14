@@ -45,6 +45,22 @@ if [ -n "$DISK" ] && [ -b "/dev/$DISK" ]; then
     done
 fi
 rm -f "$CARD_SAVED"
+# Screen Mirror's webcam (src/drivers/screen_mirror.h) stays in the gadget
+# while an app restarts: the stock app gets the gadget without it. Its links
+# go first, then its folders deepest first (configfs keeps the ones it made
+# itself until the function's own rmdir), then its module.
+for MIRROR in /sys/kernel/config/usb_gadget/*/functions/uvc.screen; do
+    [ -d "$MIRROR" ] || continue
+    GADGET=${MIRROR%/functions/*}
+    UDC=$(cat "$GADGET/UDC" 2>/dev/null || true)
+    { [ -z "$UDC" ] || echo > "$GADGET/UDC"; } 2>/dev/null || true
+    rm -f "$GADGET"/configs/*/uvc.screen 2>/dev/null || true
+    find "$MIRROR" -type l -exec rm -f {} \; 2>/dev/null || true
+    find "$MIRROR" -mindepth 1 -depth -type d -exec rmdir {} \; 2>/dev/null || true
+    rmdir "$MIRROR" 2>/dev/null || true
+    { [ -z "$UDC" ] || echo "$UDC" > "$GADGET/UDC"; } 2>/dev/null || true
+done
+rmmod sample_base_uvc 2>/dev/null || true
 # sample-base widened the USB-C audio gadget for stems and set its rate to the
 # audio device's (src/drivers/usb_gadget.h): the stock app gets its original
 # channel mask and rate back (44.1 kHz when an older line names none). Any

@@ -56,6 +56,16 @@ struct Session {
     std::atomic<uint8_t> card_share {0};
     std::atomic<bool> card_connected {false}, card_ejected {false};
     std::atomic<uint64_t> card_returns {0};
+
+    // Screen Mirror (drivers/screen_mirror.h), written by the screen thread:
+    // a MirrorState, the picture size offered, whether it is JPEG, whether a
+    // larger size fell back to 320 x 240 (no encoder) and the pictures sent.
+    struct Mirror {
+        std::atomic<uint8_t> state {0};
+        std::atomic<uint16_t> width {0}, height {0};
+        std::atomic<bool> mjpeg {false}, fallback {false};
+        std::atomic<uint64_t> frames {0};
+    } mirror;
     std::mutex prompt_lock;
     std::string prompt;
 };

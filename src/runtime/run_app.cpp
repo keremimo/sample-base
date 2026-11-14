@@ -4,6 +4,7 @@
 #include "drivers/codec_power.h"
 #include "drivers/display.h"
 #include "drivers/mixer.h"
+#include "drivers/screen_mirror.h"
 #include "drivers/usb_audio.h"
 #include "drivers/usb_gadget.h"
 #include "runtime/control_socket.h"
@@ -27,6 +28,14 @@ void signal_handler(int) { interrupted = 1; }
 // records what it rendered, and its stems, when it is recording over USB-C.
 struct AudioRoute { App& app; UsbAudioOutput& usb; };
 // The screen's counters for the status line.
+// Screen Mirror's state for the app and the status line.
+void record_mirror(Session::Mirror& out, const ScreenMirrorStatus& status) {
+    out.state.store(uint8_t(status.state));
+    out.width.store(uint16_t(status.format.width)); out.height.store(uint16_t(status.format.height));
+    out.mjpeg.store(status.format.mjpeg); out.fallback.store(status.fallback);
+    out.frames.store(status.frames);
+}
+
 void record_screen(ScreenStats& screen, const Display::Stats& stats, std::chrono::steady_clock::duration draw) {
     screen.presented.store(stats.presented, std::memory_order_relaxed);
     screen.pushed.store(stats.pushed, std::memory_order_relaxed);
@@ -68,6 +77,10 @@ int run_app(App& app, const Options& options) {
     // back once the codec has settled. Outlives both.
     SpeakerHold speaker_hold {speaker_switch_io()};
     AudioFormat requested = app.audio_format(); // Screen thread: what the app last asked for
+    // The screen as a USB webcam, at the app's mode from the start (its own thread does the work).
+    ScreenMirrorMode mirror_mode = app.screen_mirror();
+    std::unique_ptr<ScreenMirror> mirror;
+    if (display) mirror = std::make_unique<ScreenMirror>(mirror_mode);
     auto audio = open_audio(options, requested, speaker_hold);
     usb_output.set_device_rate(audio->format().rate);
     Controller controller(app, options.surface_required, usb_output, options.usb_output == "auto", &speaker_hold);
@@ -117,6 +130,7 @@ int run_app(App& app, const Options& options) {
         while (session.running.load() && !interrupted && ScreenClock::now() < deadline) {
             auto start = ScreenClock::now();
             if (auto wanted = app.audio_format(); wanted != requested) { requested = wanted; session.audio_reopen.store(true); }
+            if (auto wanted = app.screen_mirror(); mirror && wanted != mirror_mode) { mirror_mode = wanted; mirror->set_mode(wanted); }
             if (display) {
                 {
                     juce::Graphics g(image);
@@ -126,8 +140,11 @@ int run_app(App& app, const Options& options) {
                     else app.draw(g);
                 }
                 auto drawn = ScreenClock::now();
-                if (display->present(image)) last_change = drawn;
+                bool changed = display->present(image);
+                if (changed) last_change = drawn;
+                if (mirror && (changed || mirror->wants_frame())) mirror->offer(image); // the remote prompt too: what the panel shows
                 record_screen(session.screen, display->stats(), drawn - start);
+                if (mirror) record_mirror(session.mirror, mirror->status());
                 if (session.screenshot.exchange(false)) save_png(image, options.runtime + "/screen.png");
             }
             bool idle = !display || start - last_change > idle_after;

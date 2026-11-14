@@ -409,6 +409,86 @@ a card an earlier run left lent, and `install/restore-stock.sh` does the
 same before the stock app starts. The stock app's own SD Card Access is not
 touched.
 
+## Screen Mirror (the screen as a USB webcam)
+
+Screen Mirror offers the screen to a computer as a USB camera
+([src/drivers/screen_mirror.h](../src/drivers/screen_mirror.h)). macOS,
+Windows and Linux use it without a driver; so do iPads with USB-C (iPadOS
+17 and later). iPhones do not take USB cameras. An app turns it on and picks
+the size through `App::screen_mirror()`; the runtime does the rest on its
+own thread.
+
+| Size | Sent as | Made by |
+| --- | --- | --- |
+| 320 × 240 | YUYV, the screen itself | the CPU (about 0.3 ms a picture) |
+| 640 × 480 | MJPEG, the screen twice | the CPU scales and converts (1.1 ms), the encoder makes the JPEG (3.0 ms) |
+| 1280 × 720 | MJPEG, the screen three times, black at the sides | 1.8 ms and 8.6 ms |
+| 1280 × 960 | MJPEG, the screen four times | 2.3 ms and 11.4 ms |
+
+30 pictures a second; a picture is made only when the screen changed,
+otherwise the last one is sent again. Measured on the MPC (2026-11-14):
+continuously changing at 30 fps, 1280 × 960 costs 7.4 % of one core, the
+JPEG encoder itself 0.15 ms of CPU a picture. Scaling is by whole numbers, so
+each screen pixel stays a sharp square; at an even scale each YUYV pair is
+one screen pixel and its colour stays exact
+([src/drivers/mirror_frame.h](../src/drivers/mirror_frame.h)).
+
+**The webcam function.** The MPC's kernel has the gadget's UVC function
+switched off (`# CONFIG_USB_CONFIGFS_F_UVC is not set`), though V4L2 and
+videobuf2 are there. `kernel/uvc/` is the function's source from inMusic's
+6.12.60 release (`drivers/usb/gadget/function/f_uvc.c` and its `uvc_*.c`,
+`drivers/media/common/uvc.c`), built as `sample_base_uvc.ko` with
+`tools/build_kernel_modules.sh` and loaded from memory after `modprobe`
+brings in videobuf2. One change, marked in `f_uvc.c`: upstream holds the
+whole gadget off the bus (`bind_deactivated`) until a process opens the
+video device, so audio, MIDI and SSH over USB would go each time the app
+stops or crashes. Here the gadget stays on, and the function refuses the
+computer's requests (a stall, at once) while no process answers.
+
+The function is `uvc.screen` (`gadget_add_mirror()`,
+[src/drivers/usb_gadget.h](../src/drivers/usb_gadget.h)): one format and one
+frame, the size asked for, 333333 × 100 ns intervals; no interrupt endpoint;
+an isochronous streaming endpoint of 1024-byte packets, one a microframe
+(8 MB/s: 320 × 240 YUYV at 30 fps needs 4.6 MB/s, a 1280 × 960 JPEG of the
+screen is about 120 kB). It is linked after the UAC2 function and before
+USB networking: the interfaces are audio (0–2), webcam (3–4), MIDI, then
+NCM, and the endpoints IN 1–2 audio, 3 the webcam, 4 MIDI, 5–6 NCM, so
+NCM's notify endpoint keeps the 336-byte FIFO 6 (above). macOS knows the
+audio device by its interface numbers, which do not move; it finds the MIDI
+port and network interface again under their new numbers. The process that
+opens the video device answers PROBE and COMMIT (f_uvc numbers the
+interfaces 0 and 1 in its events, whatever the gadget made them), and on
+STREAMON queues the pictures.
+
+**The card shared.** A drive linked beside all that would need a seventh IN
+endpoint, and FIFO 7 has no room at all (`GTXFIFOSIZ(7) = 0x08000000`): the
+webcam steps out while the card is lent (`gadget_add_storage()`) and comes
+back with the card (`gadget_remove_storage()` relinks it from the saved
+order). The state reads `card-shared` meanwhile.
+
+**The JPEG encoder.** The RK3566 has the RK3568's VEPU (`video-codec@fdee0000`,
+`rockchip,rk3568-vepu`, JPEG only), and the MPC's kernel ships `hantro-vpu`
+for it, but the device tree leaves the node `disabled`. Its IOMMU
+(`iommu@fdee0800`) is on. The kernel has no `CONFIG_OF_OVERLAY` (no overlay
+at run time), and hantro refuses a node that is not available, so
+`kernel/vepu/sample_base_vepu.c` sets the node's `status` to `okay` in the
+live tree (memory only) and creates its platform device; `modprobe
+hantro-vpu` then registers `rockchip,rk3568-vepu-enc`, a V4L2 mem2mem
+device (YUYV in, a whole JPEG out; [src/drivers/jpeg_encoder.h](../src/drivers/jpeg_encoder.h)).
+The module has no exit: removing the device (`rmmod`) hung the kernel and
+the MPC rebooted itself (2026-11-14, no log kept). It stays until the next
+boot. When no encoder comes up, a larger size falls back to 320 × 240
+(`mirror_size=320x240-fallback` in `status`).
+
+Turning Screen Mirror on or off, or another size, rebinds the gadget like a
+rate change (about a second without USB). When the app stops, the webcam
+stays in the gadget and refuses the computer, so a restart with the same
+size does not rebind; turning it off unlinks it and unloads its module, and
+`install/restore-stock.sh` takes it out for the stock app. `status` reports
+`mirror=` (`off`, `starting`, `waiting`, `streaming`, `card-shared`,
+`failed`), `mirror_size=` and `mirror_frames=`; the service log has a
+`Screen mirror:` line for each change. Checked with QuickTime on a Mac.
+
 ## Jack detection
 
 Headphones and line out are the only jacks the AC50 can tell are plugged.

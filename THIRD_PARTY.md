@@ -25,6 +25,23 @@ Plugins project (`mpc-sample-plugins`). Its MIT notice, Copyright (c) 2026
 MPC Sample Plugins contributors, is retained in `LICENSES/MPC-Plugins-MIT.txt`.
 No sibling checkout is a build dependency.
 
+## Kernel modules
+
+The modules under `kernel/` are GPL-2.0 (text in `LICENSES/GPL-2.0.txt`),
+as the kernel they load into; each `.ko` is built from the source beside it
+by `tools/build_kernel_modules.sh` against inMusic's MPC Sample kernel
+source release (6.12.60, pinned in `docs/HARDWARE.md`).
+
+- `kernel/panel/`: sample-base's panel driver, after inMusic's
+  `drivers/gpu/drm/tiny/st7796s.c` (John Keeping), GPL-2.0+.
+- `kernel/uvc/`: the USB gadget's webcam function, the kernel's
+  `drivers/usb/gadget/function/f_uvc.c`, `uvc_configfs.c`, `uvc_queue.c`,
+  `uvc_v4l2.c`, `uvc_video.c` and their headers (Laurent Pinchart and
+  others, GPL-2.0+) and `drivers/media/common/uvc.c` as `uvc_common.c`
+  (GPL-2.0-or-later), copied from that release with their notices as they
+  are; the changes are marked `sample-base:` in `f_uvc.c`.
+- `kernel/vepu/`: written for this project, GPL-2.0.
+
 ## Fonts and platform
 
 The apps load Liberation Sans from the existing target installation. The

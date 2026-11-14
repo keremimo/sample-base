@@ -64,4 +64,17 @@ build/obj/base/drivers/panel_module.o: $(BASE_SRC)/drivers/panel_module.S $(PANE
 	@mkdir -p $(@D)
 	$(CC) -c -DPANEL_MODULE='"$(PANEL_MODULE)"' $< -o $@
 endif
+# Screen Mirror's modules (kernel/uvc, kernel/vepu; src/drivers/screen_mirror.h),
+# embedded the same way; a build without them has no Screen Mirror.
+UVC_MODULE ?= $(BASE_SRC)/../kernel/uvc/sample_base_uvc.ko
+VEPU_MODULE ?= $(BASE_SRC)/../kernel/vepu/sample_base_vepu.ko
+ifneq ($(wildcard $(UVC_MODULE)),)
+ifneq ($(wildcard $(VEPU_MODULE)),)
+OBJECTS += build/obj/base/drivers/kernel_modules.o
+$(TARGET): build/obj/base/drivers/kernel_modules.o
+build/obj/base/drivers/kernel_modules.o: $(BASE_SRC)/drivers/kernel_modules.S $(UVC_MODULE) $(VEPU_MODULE)
+	@mkdir -p $(@D)
+	$(CC) -c -DUVC_MODULE='"$(UVC_MODULE)"' -DVEPU_MODULE='"$(VEPU_MODULE)"' $< -o $@
+endif
+endif
 -include $(OBJECTS:.o=.d)

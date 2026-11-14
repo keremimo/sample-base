@@ -68,5 +68,32 @@ std::string gadget_storage_medium(bool& present, const std::string& root = gadge
 enum class GadgetEject { Done, Locked, Failed };
 GadgetEject gadget_eject_storage(bool force, std::string& error, const std::string& root = gadget_root);
 // Unlinks and removes the function, the other links back in `order` (the
-// gadget rebinds once more).
+// gadget rebinds once more). A function the drive put out (Screen Mirror's
+// webcam) is linked again when it still exists.
 bool gadget_remove_storage(const std::vector<std::string>& order, std::string& error, const std::string& root = gadget_root);
+
+// Screen Mirror's USB webcam (drivers/screen_mirror.h): kernel/uvc's "uvc"
+// function offering one picture size at 30 fps, YUYV or MJPEG. It is linked
+// after the UAC2 function (the audio interfaces keep their numbers, by which
+// macOS knows the device) and before the network function, which stays last
+// (the controller's sixth transmit FIFO fits only its notify endpoint). A
+// drive offered by gadget_add_storage() would need a seventh IN endpoint, for
+// which the controller has no FIFO: the webcam steps out while the card is
+// lent. Every relink in this file takes one lock, so the service thread and
+// the mirror's own thread never change the gadget at once.
+constexpr const char* mirror_function = "uvc.screen";
+struct MirrorFormat {
+    unsigned width = 320, height = 240;
+    bool mjpeg = false; // else YUYV
+    bool operator==(const MirrorFormat& other) const { return width == other.width && height == other.height && mjpeg == other.mjpeg; }
+    bool operator!=(const MirrorFormat& other) const { return !(*this == other); }
+};
+enum class MirrorLink { Linked, CardShared, Failed };
+// Makes the function for `format` (one made for another size goes first) and
+// links it; the gadget rebinds unless it is linked for `format` already.
+// Needs kernel/uvc's module loaded. CardShared: the drive is linked, nothing
+// changed.
+MirrorLink gadget_add_mirror(const MirrorFormat& format, std::string& error, const std::string& root = gadget_root);
+bool gadget_mirror_linked(const std::string& root = gadget_root);
+// Unlinks the function (the gadget rebinds) and removes it.
+bool gadget_remove_mirror(std::string& error, const std::string& root = gadget_root);

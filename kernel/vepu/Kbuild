@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: GPL-2.0
+obj-m := sample_base_vepu.o

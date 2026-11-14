@@ -30,13 +30,23 @@ IMAGE_HEADS = (b'\x89PNG\r\n\x1a\n', b'\xff\xd8\xff', b'GIF87a', b'GIF89a')
 
 
 # A kernel module is binary too: allowed as an ELF object under kernel/<name>/
-# beside the C source it is built from (tools/build_kernel_modules.sh), still
-# under the size limit and scanned like any other file.
+# beside the C source it is built from (tools/build_kernel_modules.sh): its
+# own .c, or for a module of several files the folder's Kbuild and C sources.
+# Still under the size limit and scanned like any other file.
 KERNEL_MODULE = re.compile(rb'(?:^|/)kernel/[^/]+/[^/]+\.ko$')
+# A module's C may be kernel code copied with its notices (kernel/uvc/), whose
+# authors' e-mail addresses stay as the kernel has them: the e-mail rule
+# skips C sources under kernel/<name>/, every other rule still applies.
+KERNEL_SOURCE = re.compile(rb'(?:^|/)kernel/[^/]+/[^/]+\.[ch]$')
 
 
 def kernel_module(name, data, indexed):
-    return bool(KERNEL_MODULE.search(name)) and data.startswith(b'\x7fELF') and name[:-3] + b'.c' in indexed
+    if not KERNEL_MODULE.search(name) or not data.startswith(b'\x7fELF'):
+        return False
+    if name[:-3] + b'.c' in indexed:
+        return True
+    folder = name[:name.rfind(b'/') + 1]
+    return folder + b'Kbuild' in indexed and any(i.startswith(folder) and i.endswith(b'.c') for i in indexed)
 
 
 def doc_image(name, data):
@@ -88,6 +98,8 @@ def main():
         if b'\0' in data and not doc_image(name, data) and not kernel_module(name, data, indexed):
             errors.append((name, 'binary data is not source text'))
         for reason, pattern in PATTERNS.items():
+            if reason == 'email address' and KERNEL_SOURCE.search(name):
+                continue # kernel authors' public addresses in the notices copied with their code
             if pattern.search(data):
                 errors.append((name, reason))
     for name, reason in errors:

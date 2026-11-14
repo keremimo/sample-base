@@ -267,13 +267,20 @@ hooks, their threads and how to wire in an app.
   the two, so long sessions stay continuous. The runtime widens the gadget to 18 channels so an app
   can send 16 mono track stems after the main mix
   ([src/drivers/usb_gadget.h](src/drivers/usb_gadget.h)).
+- **Screen Mirror** ([src/drivers/screen_mirror.h](src/drivers/screen_mirror.h))
+  offers the screen to a computer as a USB webcam, 320 × 240 up to
+  1280 × 960 at 30 fps, the larger sizes scaled by whole numbers and made
+  JPEG by the RK3566's own encoder; an app turns it on with
+  `App::screen_mirror()`.
 - Fonts come from the MPC's existing Liberation Sans installation.
 
 The hardware reference is inMusic's
 [MPC Sample 1.3.0 source release](https://github.com/inmusic-software/az0x-open-source/tree/mpc-sample/1.3.0),
 especially the kernel's `rk3566-az07-ac50.dts`,
 `drivers/gpu/drm/tiny/st7796s.c` and `sound/drivers/serial-generic.c`.
-Existing kernel drivers are used; no kernel rebuild or installation is needed.
+The kernel is not rebuilt or replaced: what it lacks comes as modules under
+`kernel/` (the panel's driver, the USB webcam function, the JPEG encoder's
+switch), kept inside the binary and loaded from memory while an app runs.
 
 ## Validation and licensing
 

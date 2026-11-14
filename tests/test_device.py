@@ -212,7 +212,7 @@ class RecoveryScriptTests(unittest.TestCase):
             systemctl.write_text('#!/bin/sh\nif [ "$1" = is-system-running ]; then echo running; exit 0; fi\n'
                                  'cat "$FIXTURE_ROOT/spi/drivers/st7796s/bind" > "$FIXTURE_ROOT/at-start"\n')
             rmmod = root / "rmmod"
-            rmmod.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_ROOT/rmmod"\n')
+            rmmod.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_ROOT/removed"\n')
             for tool in (systemctl, rmmod):
                 tool.chmod(0o755)
             spi = root / "spi"
@@ -231,7 +231,7 @@ class RecoveryScriptTests(unittest.TestCase):
             self.assertEqual((spi / "drivers/sample-base-panel/unbind").read_text(), "spi3.0\n")
             self.assertEqual((device / "driver_override").read_text(), "\n")
             self.assertEqual((root / "at-start").read_text(), "spi3.0\n")
-            self.assertEqual((root / "rmmod").read_text(), "sample_base_panel\n")
+            self.assertEqual((root / "removed").read_text().splitlines()[-1], "sample_base_panel") # the last module out
 
     def test_gadget_mask_restored_before_stock(self):
         source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
@@ -260,6 +260,44 @@ class RecoveryScriptTests(unittest.TestCase):
             for name in ("uac2.audio", "ncm.network"):
                 self.assertEqual(os.readlink(config / name), str(configfs / "ac50/functions" / name))
             self.assertFalse(saved.exists())
+
+    def test_screen_mirror_webcam_taken_out_before_stock(self):
+        source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            systemctl = root / "systemctl"
+            systemctl.write_text('#!/bin/sh\nif [ "$1" = is-system-running ]; then echo running; exit 0; fi\n'
+                                 'cat "$FIXTURE_ROOT/configfs/ac50/UDC" > "$FIXTURE_ROOT/at-start"\n')
+            rmmod = root / "rmmod"
+            rmmod.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_ROOT/removed"\n')
+            for tool in (systemctl, rmmod):
+                tool.chmod(0o755)
+            configfs = root / "configfs"
+            webcam = configfs / "ac50/functions/uvc.screen"
+            for folder in ("control/header/h", "control/class/fs", "streaming/header/h", "streaming/mjpeg/m/f", "streaming/class/hs"):
+                (webcam / folder).mkdir(parents=True)
+            (webcam / "streaming/mjpeg/m/f/wWidth").write_text("1280\n")
+            (webcam / "control/class/fs/h").symlink_to(webcam / "control/header/h")
+            (webcam / "streaming/class/hs/h").symlink_to(webcam / "streaming/header/h")
+            (webcam / "streaming/header/h/m").symlink_to(webcam / "streaming/mjpeg/m")
+            (configfs / "ac50/functions/uac2.audio").mkdir(parents=True)
+            (configfs / "ac50/UDC").write_text("fcc00000.usb\n")
+            config = configfs / "ac50/configs/c.1"
+            config.mkdir(parents=True)
+            for name in ("uac2.audio", "uvc.screen"):
+                (config / name).symlink_to(configfs / "ac50/functions" / name)
+            script = root / "restore.sh"
+            script.write_text(source.replace("/bin/systemctl", shlex.quote(str(systemctl)))
+                              .replace("/sys/kernel/config/usb_gadget", str(configfs)).replace("rmmod ", shlex.quote(str(rmmod)) + " ")
+                              .replace("/sys/bus/spi", str(root / "none")))
+            subprocess.run(["sh", str(script)], check=True, env={**os.environ, "FIXTURE_ROOT": temp})
+            self.assertFalse(os.path.lexists(config / "uvc.screen"))
+            self.assertTrue((config / "uac2.audio").is_symlink())
+            # A plain folder keeps the attribute file configfs would drop with the function; the links and the
+            # folders made for it are gone.
+            self.assertFalse((webcam / "streaming/header/h").exists() or (webcam / "control/class/fs/h").is_symlink())
+            self.assertEqual((root / "at-start").read_text(), "fcc00000.usb\n")
+            self.assertIn("sample_base_uvc", (root / "removed").read_text().splitlines())
 
     def test_gadget_rate_restored_before_stock(self):
         source = (Path(__file__).resolve().parents[1] / "install/restore-stock.sh").read_text()

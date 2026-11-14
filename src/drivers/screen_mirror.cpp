@@ -1,0 +1,414 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+#include "drivers/screen_mirror.h"
+#include "drivers/jpeg_encoder.h"
+#include "drivers/kernel_module.h"
+#include "drivers/mirror_frame.h"
+#include <juce_graphics/juce_graphics.h>
+#include <fcntl.h>
+#include <linux/usb/ch9.h>
+#include <linux/usb/g_uvc.h>
+#include <linux/usb/video.h>
+#include <linux/videodev2.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/timerfd.h>
+#include <unistd.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <iostream>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+// Weak: a build without the modules (base.mk) has no Screen Mirror.
+extern "C" const unsigned char sample_base_uvc_module[] __attribute__((weak));
+extern "C" const unsigned char sample_base_uvc_module_end[] __attribute__((weak));
+extern "C" const unsigned char sample_base_vepu_module[] __attribute__((weak));
+extern "C" const unsigned char sample_base_vepu_module_end[] __attribute__((weak));
+
+const char* mirror_state_name(MirrorState state) {
+    switch (state) {
+    case MirrorState::Off: return "off";
+    case MirrorState::Starting: return "starting";
+    case MirrorState::Waiting: return "waiting";
+    case MirrorState::Streaming: return "streaming";
+    case MirrorState::CardShared: return "card-shared";
+    case MirrorState::Failed: return "failed";
+    }
+    return "off";
+}
+
+namespace {
+using Clock = std::chrono::steady_clock;
+constexpr unsigned interval_100ns = 333333;  // 30 pictures a second, in UVC's units
+constexpr unsigned max_payload = 1024;       // the streaming endpoint's packet (gadget_add_mirror())
+constexpr unsigned buffer_count = 4;
+constexpr int jpeg_quality = 85;
+
+int xioctl(int fd, unsigned long request, void* argument) {
+    int result;
+    do result = ioctl(fd, request, argument); while (result < 0 && errno == EINTR);
+    return result;
+}
+
+unsigned frame_bytes(const MirrorFormat& f) { return f.mjpeg ? f.width * f.height : f.width * f.height * 2; }
+} // namespace
+
+struct ScreenMirror::Worker {
+    // Shared with the other threads.
+    mutable std::mutex lock;
+    ScreenMirrorMode wanted;
+    std::vector<uint32_t> offered = std::vector<uint32_t>(size_t(mirror_frame::screen_width) * mirror_frame::screen_height, 0xff000000u);
+    uint64_t offered_serial = 0;
+    std::atomic<bool> taking {false}, need_frame {false}, running {true};
+    mutable std::mutex status_lock;
+    ScreenMirrorStatus shown;
+
+    // The worker thread's own.
+    bool first = true;
+    ScreenMirrorMode applied;
+    MirrorFormat format;
+    bool fallback = false;
+    int fd = -1, timer = -1;
+    bool streaming = false;
+    std::array<void*, buffer_count> memory {};
+    std::array<size_t, buffer_count> lengths {};
+    unsigned buffers = 0;
+    std::vector<unsigned> idle;      // buffers back from the computer, to fill
+    JpegEncoder encoder;
+    std::vector<uint32_t> screen = std::vector<uint32_t>(size_t(mirror_frame::screen_width) * mirror_frame::screen_height, 0xff000000u);
+    std::vector<uint8_t> payload;    // the picture as sent: YUYV or a JPEG file
+    uint64_t payload_serial = ~0ull;
+    uvc_streaming_control probe {}, commit {};
+    int pending_control = 0;         // the control a SET_CUR's data is for
+    Clock::time_point retry = Clock::now();
+    std::thread thread;
+
+    explicit Worker(const ScreenMirrorMode& initial) : wanted(initial) {
+        taking.store(initial.on); need_frame.store(initial.on);
+        thread = std::thread([this] { run(); });
+    }
+    ~Worker() { running.store(false); thread.join(); }
+
+    void set_state(MirrorState state, const std::string& error = {}) {
+        std::lock_guard<std::mutex> guard(status_lock);
+        if (state != shown.state || error != shown.error) {
+            std::cout << "Screen mirror: " << mirror_state_name(state);
+            if (state != MirrorState::Off) std::cout << ' ' << format.width << 'x' << format.height << (format.mjpeg ? " MJPEG" : " YUYV");
+            if (!error.empty()) std::cout << " (" << error << ')';
+            std::cout << std::endl;
+        }
+        shown.state = state; shown.error = error; shown.format = format; shown.fallback = fallback;
+    }
+    MirrorState state() const { std::lock_guard<std::mutex> guard(status_lock); return shown.state; }
+    void count_frame() { std::lock_guard<std::mutex> guard(status_lock); ++shown.frames; }
+
+    // ---- Modules, encoder and gadget ----
+
+    bool load_webcam(std::string& error) {
+        if (kernel_module::loaded("sample_base_uvc")) return true;
+        // The module was built without the kernel's symbol list: its videobuf2 dependencies go in first.
+        if (!kernel_module::probe({"videobuf2-v4l2", "videobuf2-vmalloc", "videobuf2-dma-sg"}, &error)) return false;
+        return kernel_module::load("sample_base_uvc", sample_base_uvc_module, sample_base_uvc_module_end, &error);
+    }
+
+    bool start_encoder(std::string& error) {
+        if (!kernel_module::load("sample_base_vepu", sample_base_vepu_module, sample_base_vepu_module_end, &error)) return false;
+        if (!kernel_module::loaded("hantro_vpu") && !kernel_module::probe({"hantro-vpu"}, &error)) return false;
+        // hantro registers its device a moment after it loads.
+        for (int attempt = 0; attempt < 20 && running.load(); ++attempt) {
+            if (encoder.open(format.width, format.height, jpeg_quality, error)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        return false;
+    }
+
+    void apply(const ScreenMirrorMode& mode) {
+        close_device();
+        encoder.close();
+        payload.clear(); payload_serial = ~0ull;
+        std::string error;
+        if (!mode.on) {
+            if (!gadget_remove_mirror(error)) { set_state(MirrorState::Failed, error); return; }
+            kernel_module::unload("sample_base_uvc");
+            set_state(MirrorState::Off);
+            return;
+        }
+        format = {mode.width, mode.height, !(mode.width == 320 && mode.height == 240)};
+        fallback = false;
+        set_state(MirrorState::Starting);
+        if (!load_webcam(error)) { set_state(MirrorState::Failed, error); return; }
+        if (format.mjpeg && !start_encoder(error)) {
+            std::cout << "Screen mirror: " << error << ", 320 x 240 instead" << std::endl;
+            format = {320, 240, false}; fallback = true;
+        }
+        link();
+    }
+
+    void link() {
+        std::string error;
+        switch (gadget_add_mirror(format, error)) {
+        case MirrorLink::Linked: set_state(MirrorState::Waiting); break;
+        case MirrorLink::CardShared: set_state(MirrorState::CardShared); break;
+        case MirrorLink::Failed: set_state(MirrorState::Failed, error); break;
+        }
+    }
+
+    // ---- The webcam's video device ----
+
+    bool open_device() {
+        for (int n = 0; n < 32 && fd < 0; ++n) {
+            std::string path = "/dev/video" + std::to_string(n);
+            int candidate = open(path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
+            if (candidate < 0) continue;
+            v4l2_capability capability {};
+            if (xioctl(candidate, VIDIOC_QUERYCAP, &capability) == 0 && std::strcmp(reinterpret_cast<const char*>(capability.driver), "g_uvc") == 0)
+                fd = candidate;
+            else close(candidate);
+        }
+        if (fd < 0) return false;
+        // Taking SETUP makes this the process that answers the computer (kernel/uvc refuses it until then).
+        for (unsigned type : {UVC_EVENT_CONNECT, UVC_EVENT_DISCONNECT, UVC_EVENT_STREAMON, UVC_EVENT_STREAMOFF, UVC_EVENT_DATA, UVC_EVENT_SETUP}) {
+            v4l2_event_subscription subscription {};
+            subscription.type = type;
+            if (xioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &subscription) < 0) {
+                std::string error = std::string("webcam events: ") + std::strerror(errno);
+                close(fd); fd = -1;
+                set_state(MirrorState::Failed, error);
+                return false;
+            }
+        }
+        set_format();
+        probe = commit = defaults();
+        set_state(MirrorState::Waiting);
+        return true;
+    }
+
+    void set_format() {
+        v4l2_format f {};
+        f.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        f.fmt.pix.width = format.width; f.fmt.pix.height = format.height;
+        f.fmt.pix.pixelformat = format.mjpeg ? V4L2_PIX_FMT_MJPEG : V4L2_PIX_FMT_YUYV;
+        f.fmt.pix.field = V4L2_FIELD_NONE;
+        f.fmt.pix.bytesperline = format.mjpeg ? 0 : format.width * 2;
+        f.fmt.pix.sizeimage = frame_bytes(format);
+        xioctl(fd, VIDIOC_S_FMT, &f);
+    }
+
+    // The device closed without STREAMOFF: kernel/uvc stops a computer still streaming by itself.
+    void close_device() {
+        unmap();
+        if (fd >= 0) close(fd);
+        fd = -1; streaming = false;
+    }
+
+    void unmap() {
+        for (unsigned n = 0; n < buffers; ++n) if (memory[n] && memory[n] != MAP_FAILED) munmap(memory[n], lengths[n]);
+        memory.fill(nullptr); buffers = 0; idle.clear();
+    }
+
+    // ---- What the computer asks ----
+
+    uvc_streaming_control defaults() const {
+        uvc_streaming_control c {};
+        c.bmHint = 1; c.bFormatIndex = 1; c.bFrameIndex = 1;
+        c.dwFrameInterval = interval_100ns;
+        c.dwMaxVideoFrameSize = frame_bytes(format);
+        c.dwMaxPayloadTransferSize = max_payload;
+        c.bmFramingInfo = 3; c.bPreferedVersion = 1; c.bMinVersion = 1; c.bMaxVersion = 1;
+        return c;
+    }
+
+    // kernel/uvc numbers the interfaces 0 (control) and 1 (streaming) in its events, whatever the gadget made them.
+    uvc_request_data answer(const usb_ctrlrequest& request) {
+        uvc_request_data response {};
+        response.length = -EL2HLT; // a stall, unless answered below
+        unsigned interface = request.wIndex & 0xff, entity = request.wIndex >> 8, control = request.wValue >> 8;
+        unsigned length = request.wLength;
+        if ((request.bRequestType & USB_TYPE_MASK) != USB_TYPE_CLASS || (request.bRequestType & USB_RECIP_MASK) != USB_RECIP_INTERFACE)
+            return response;
+        if (interface == 1 && entity == 0 && (control == UVC_VS_PROBE_CONTROL || control == UVC_VS_COMMIT_CONTROL)) {
+            uvc_streaming_control c {};
+            switch (request.bRequest) {
+            case UVC_SET_CUR: pending_control = int(control); response.length = int(length); return response; // the data follows
+            case UVC_GET_CUR: c = control == UVC_VS_PROBE_CONTROL ? probe : commit; break;
+            case UVC_GET_MIN: case UVC_GET_MAX: case UVC_GET_DEF: c = defaults(); break;
+            case UVC_GET_RES: break;
+            case UVC_GET_LEN: response.data[0] = sizeof c; response.data[1] = 0; response.length = 2; return response;
+            case UVC_GET_INFO: response.data[0] = 3; response.length = 1; return response; // GET and SET
+            default: return response;
+            }
+            std::memcpy(response.data, &c, sizeof c);
+            response.length = int(std::min<size_t>(length, sizeof c));
+        } else if (interface == 0 && entity == 0 && control == UVC_VC_REQUEST_ERROR_CODE_CONTROL) {
+            if (request.bRequest == UVC_GET_CUR) { response.data[0] = 0x06; response.length = 1; } // "invalid control"
+            else if (request.bRequest == UVC_GET_INFO) { response.data[0] = 1; response.length = 1; }
+        }
+        return response;
+    }
+
+    // One picture size and rate is offered: whatever the computer proposes, the answer is ours.
+    void take_data(const uvc_request_data& data) {
+        if (pending_control == UVC_VS_PROBE_CONTROL) probe = defaults();
+        else if (pending_control == UVC_VS_COMMIT_CONTROL) commit = defaults();
+        (void)data;
+    }
+
+    void events() {
+        v4l2_event event {};
+        while (fd >= 0 && xioctl(fd, VIDIOC_DQEVENT, &event) == 0) {
+            auto* uvc = reinterpret_cast<uvc_event*>(&event.u.data);
+            switch (event.type) {
+            case UVC_EVENT_SETUP: {
+                uvc_request_data response = answer(uvc->req);
+                xioctl(fd, UVCIOC_SEND_RESPONSE, &response);
+                break;
+            }
+            case UVC_EVENT_DATA: take_data(uvc->data); break;
+            case UVC_EVENT_STREAMON: stream_on(); break;
+            case UVC_EVENT_STREAMOFF: stream_off(); break;
+            case UVC_EVENT_DISCONNECT: if (streaming) stream_off(); break;
+            default: break;
+            }
+        }
+        if (fd >= 0 && errno == ENODEV) { close_device(); set_state(MirrorState::Waiting); } // the gadget rebound (card lent, a rate)
+    }
+
+    void stream_on() {
+        set_format();
+        v4l2_requestbuffers request {};
+        request.count = buffer_count; request.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; request.memory = V4L2_MEMORY_MMAP;
+        if (xioctl(fd, VIDIOC_REQBUFS, &request) < 0 || request.count == 0) { set_state(MirrorState::Failed, "webcam buffers"); return; }
+        buffers = std::min(request.count, buffer_count);
+        for (unsigned n = 0; n < buffers; ++n) {
+            v4l2_buffer buffer {};
+            buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = n;
+            if (xioctl(fd, VIDIOC_QUERYBUF, &buffer) < 0) { unmap(); set_state(MirrorState::Failed, "webcam buffer"); return; }
+            lengths[n] = buffer.length;
+            memory[n] = mmap(nullptr, buffer.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buffer.m.offset);
+            if (memory[n] == MAP_FAILED) { unmap(); set_state(MirrorState::Failed, "webcam buffer map"); return; }
+            send(n);
+        }
+        int type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        // STREAMON also finishes the computer's request to start (kernel/uvc held its status for this).
+        if (xioctl(fd, VIDIOC_STREAMON, &type) < 0) { set_state(MirrorState::Failed, std::string("webcam start: ") + std::strerror(errno)); return; }
+        streaming = true;
+        set_state(MirrorState::Streaming);
+    }
+
+    void stream_off() {
+        int type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        xioctl(fd, VIDIOC_STREAMOFF, &type); // also answers the computer's request to stop
+        unmap();
+        v4l2_requestbuffers none {};
+        none.count = 0; none.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; none.memory = V4L2_MEMORY_MMAP;
+        xioctl(fd, VIDIOC_REQBUFS, &none);
+        streaming = false;
+        set_state(MirrorState::Waiting);
+    }
+
+    // ---- Pictures ----
+
+    // The picture for the screen offered last: made again only when it changed.
+    void refresh() {
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            if (offered_serial == payload_serial && !payload.empty()) return;
+            screen = offered;
+            payload_serial = offered_serial;
+        }
+        if (format.mjpeg) {
+            mirror_frame::to_yuyv(screen.data(), format.width, format.height, encoder.input(), encoder.stride());
+            const uint8_t* jpeg = nullptr;
+            size_t size = 0;
+            std::string error;
+            if (encoder.encode(jpeg, size, error)) payload.assign(jpeg, jpeg + std::min<size_t>(size, frame_bytes(format)));
+            else if (payload.empty()) std::cout << "Screen mirror: " << error << std::endl;
+        } else {
+            payload.resize(frame_bytes(format));
+            mirror_frame::to_yuyv(screen.data(), format.width, format.height, payload.data(), size_t(format.width) * 2);
+        }
+    }
+
+    void send(unsigned n) {
+        refresh();
+        size_t size = std::min(payload.size(), lengths[n]);
+        if (size) std::memcpy(memory[n], payload.data(), size);
+        v4l2_buffer buffer {};
+        buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = n;
+        buffer.bytesused = unsigned(size);
+        if (xioctl(fd, VIDIOC_QBUF, &buffer) == 0) count_frame();
+    }
+
+    void returned() {
+        v4l2_buffer buffer {};
+        buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP;
+        while (xioctl(fd, VIDIOC_DQBUF, &buffer) == 0) idle.push_back(buffer.index);
+    }
+
+    // ---- The thread ----
+
+    void run() {
+        timer = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+        itimerspec every {{0, long(interval_100ns) * 100}, {0, long(interval_100ns) * 100}};
+        timerfd_settime(timer, 0, &every, nullptr);
+        while (running.load()) {
+            ScreenMirrorMode mode;
+            { std::lock_guard<std::mutex> guard(lock); mode = wanted; }
+            if (first || mode != applied) { first = false; applied = mode; apply(mode); retry = Clock::now() + std::chrono::seconds(1); }
+            auto now = Clock::now();
+            // Not open: the webcam was just linked, or the gadget rebound (the card lent and back, a rate change).
+            if (applied.on && fd < 0 && now >= retry && state() != MirrorState::Failed) {
+                retry = now + std::chrono::seconds(1);
+                if (gadget_mirror_linked()) open_device();
+                else link();
+            }
+            pollfd waits[2] {{fd, short(POLLPRI | (streaming && idle.size() < buffers ? POLLOUT : 0)), 0}, {timer, POLLIN, 0}};
+            if (poll(waits, 2, 200) < 0) continue;
+            if (fd >= 0 && (waits[0].revents & POLLPRI)) events();
+            if (fd >= 0 && (waits[0].revents & POLLHUP)) { close_device(); set_state(MirrorState::Waiting); continue; }
+            if (fd >= 0 && streaming && (waits[0].revents & POLLOUT)) returned();
+            if (waits[1].revents & POLLIN) {
+                uint64_t ticks = 0;
+                if (read(timer, &ticks, sizeof ticks) < 0) ticks = 0;
+                if (fd >= 0 && streaming && !idle.empty()) { unsigned n = idle.back(); idle.pop_back(); send(n); }
+            }
+        }
+        close_device();
+        encoder.close();
+        if (timer >= 0) close(timer);
+    }
+};
+
+ScreenMirror::ScreenMirror(const ScreenMirrorMode& initial) : worker(std::make_unique<Worker>(initial)) {}
+ScreenMirror::~ScreenMirror() = default;
+
+void ScreenMirror::set_mode(const ScreenMirrorMode& mode) {
+    std::lock_guard<std::mutex> guard(worker->lock);
+    if (mode.on && (mode != worker->wanted || !worker->taking.load())) worker->need_frame.store(true);
+    worker->wanted = mode;
+    worker->taking.store(mode.on);
+}
+
+bool ScreenMirror::wants_frame() const { return worker->need_frame.load(); }
+
+void ScreenMirror::offer(const juce::Image& image) {
+    if (!worker->taking.load() || image.getWidth() != int(mirror_frame::screen_width) || image.getHeight() != int(mirror_frame::screen_height)) return;
+    juce::Image::BitmapData bitmap(image, juce::Image::BitmapData::readOnly);
+    if (bitmap.pixelStride != 4) return;
+    std::lock_guard<std::mutex> guard(worker->lock);
+    for (unsigned row = 0; row < mirror_frame::screen_height; ++row)
+        std::memcpy(worker->offered.data() + size_t(row) * mirror_frame::screen_width, bitmap.getLinePointer(int(row)), mirror_frame::screen_width * 4);
+    ++worker->offered_serial;
+    worker->need_frame.store(false);
+}
+
+ScreenMirrorStatus ScreenMirror::status() const {
+    std::lock_guard<std::mutex> guard(worker->status_lock);
+    return worker->shown;
+}

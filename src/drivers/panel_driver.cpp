@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "drivers/panel_driver.h"
+#include "drivers/kernel_module.h"
 #include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
 #include <unistd.h>
-#include <cerrno>
-#include <cstddef>
 #include <cstring>
 #include <string>
 
@@ -37,28 +34,8 @@ std::string bound() {
     return slash ? slash + 1 : target;
 }
 
-bool loaded() { return access("/sys/module/sample_base_panel", F_OK) == 0; }
-
 // The embedded module into the kernel, from memory (no file on any disk).
-bool load() {
-    if (loaded()) return true;
-    if (!sample_base_panel_module || !sample_base_panel_module_end) return false;
-    const size_t size = size_t(sample_base_panel_module_end - sample_base_panel_module);
-    if (!size) return false;
-    int fd = memfd_create("sample-base-panel", MFD_CLOEXEC);
-    if (fd < 0) return false;
-    bool written = true;
-    for (size_t done = 0; done < size && written;) {
-        ssize_t n = write(fd, sample_base_panel_module + done, size - done);
-        if (n < 0 && errno == EINTR) continue;
-        written = n > 0;
-        if (written) done += size_t(n);
-    }
-    long result = written ? syscall(SYS_finit_module, fd, "", 0) : -1;
-    int error = errno;
-    close(fd);
-    return result == 0 || (written && error == EEXIST);
-}
+bool load() { return kernel_module::load("sample_base_panel", sample_base_panel_module, sample_base_panel_module_end); }
 
 void bind(const char* driver) { put(drivers + driver + "/bind", "spi3.0"); }
 void unbind(const char* driver) { put(drivers + driver + "/unbind", "spi3.0"); }
@@ -85,5 +62,5 @@ void panel_driver::give_back() {
     if (bound() == ours) unbind(ours);
     clear_override();
     if (bound().empty()) bind(stock);
-    if (loaded()) syscall(SYS_delete_module, "sample_base_panel", O_NONBLOCK);
+    kernel_module::unload("sample_base_panel");
 }

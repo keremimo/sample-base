@@ -115,4 +115,51 @@ int main(int argc, char** argv) {
     assert(gadget_remove_storage(order, error, root)); // None: nothing to do
     gadget_storage_medium(present, root);
     assert(!present);
+
+    // Screen Mirror: the webcam made for one size and linked (absolute links throughout; configfs makes the
+    // default groups itself, here make_dirs() does), the same size again left alone, another size made anew.
+    std::string webcam = gadget + "/functions/uvc.screen";
+    auto points_at = [](const std::string& link, const std::string& to) {
+        char buffer[512] {};
+        return readlink(link.c_str(), buffer, sizeof buffer - 1) > 0 && std::string(buffer) == to;
+    };
+    assert(!gadget_mirror_linked(root));
+    assert(gadget_add_mirror({1280, 720, true}, error, root) == MirrorLink::Linked);
+    assert(gadget_mirror_linked(root) && linked() && slurp(gadget + "/UDC") == "fcc00000.usb\n");
+    assert(points_at(config + "/uvc.screen", webcam));
+    std::string frame = webcam + "/streaming/mjpeg/m/f";
+    assert(slurp(frame + "/wWidth") == "1280\n" && slurp(frame + "/wHeight") == "720\n");
+    assert(slurp(frame + "/dwMaxVideoFrameBufferSize") == "921600\n" && slurp(frame + "/dwFrameInterval") == "333333\n");
+    assert(slurp(frame + "/dwMaxBitRate") == "221184000\n" && slurp(webcam + "/streaming_maxpacket") == "1024\n");
+    assert(points_at(webcam + "/streaming/header/h/m", webcam + "/streaming/mjpeg/m"));
+    for (auto speed : {"fs", "hs", "ss"}) assert(points_at(webcam + "/streaming/class/" + speed + "/h", webcam + "/streaming/header/h"));
+    for (auto speed : {"fs", "ss"}) assert(points_at(webcam + "/control/class/" + speed + "/h", webcam + "/control/header/h"));
+    put(webcam + "/kept", "1\n");
+    assert(gadget_add_mirror({1280, 720, true}, error, root) == MirrorLink::Linked && slurp(webcam + "/kept") == "1\n");
+    assert(gadget_add_mirror({320, 240, false}, error, root) == MirrorLink::Linked);
+    assert(stat((webcam + "/kept").c_str(), &info) != 0 && stat((webcam + "/streaming/mjpeg/m").c_str(), &info) != 0);
+    assert(slurp(webcam + "/streaming/uncompressed/u/f/wWidth") == "320\n");
+    assert(slurp(webcam + "/streaming/uncompressed/u/f/dwMaxVideoFrameBufferSize") == "153600\n");
+    assert(gadget_mirror_linked(root) && linked());
+
+    // The drive puts the webcam out (the controller has no FIFO for a seventh IN endpoint) and brings it back;
+    // asked for meanwhile, the webcam waits.
+    for (auto dir : {storage, lun}) mkdir(dir.c_str(), 0700);
+    for (auto name : {"file", "removable", "ro", "forced_eject"}) put(lun + "/" + name, "\n");
+    order.clear();
+    assert(gadget_add_storage("/dev/mmcblk1", order, error, root));
+    assert(!gadget_mirror_linked(root) && stat(webcam.c_str(), &info) == 0 && linked());
+    assert(std::find(order.begin(), order.end(), "uvc.screen") != order.end());
+    assert(gadget_add_mirror({320, 240, false}, error, root) == MirrorLink::CardShared && !gadget_mirror_linked(root));
+    assert(gadget_eject_storage(false, error, root) == GadgetEject::Done);
+    for (auto name : {"file", "removable", "ro", "forced_eject"}) unlink((lun + "/" + name).c_str());
+    rmdir(lun.c_str());
+    assert(gadget_remove_storage(order, error, root));
+    assert(gadget_mirror_linked(root) && points_at(config + "/uvc.screen", webcam) && linked());
+
+    // Off: unlinked and gone, the rest as it was.
+    assert(gadget_remove_mirror(error, root));
+    assert(!gadget_mirror_linked(root) && stat(webcam.c_str(), &info) != 0 && lstat((config + "/uvc.screen").c_str(), &info) != 0);
+    assert(linked() && slurp(gadget + "/UDC") == "fcc00000.usb\n");
+    assert(gadget_remove_mirror(error, root)); // None: nothing to do
 }

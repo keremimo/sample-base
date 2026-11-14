@@ -84,6 +84,12 @@ class RuntimeTests(unittest.TestCase):
             compile_fixture(binary, "tests/usb_gadget.cpp", "src/drivers/usb_gadget.cpp")
             subprocess.run([str(binary), temp], check=True, timeout=10)
 
+    def test_screen_mirror_picture_scaled_centred_and_yuyv(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "mirror-frame"
+            compile_fixture(binary, "tests/mirror_frame.cpp", "src/drivers/mirror_frame.cpp")
+            subprocess.run([str(binary)], check=True, timeout=10)
+
     def test_card_share_found_refused_and_recovered(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "card-share"
@@ -341,7 +347,8 @@ class RuntimeTests(unittest.TestCase):
                 status = command("status")
                 # The runtime's fields only: the starter adds none.
                 self.assertTrue(status.startswith("OK frames=") and status.endswith("push_exit=1 usb_output=stopped card_share=home "
-                                                                     "audio_rate=44100 audio_periods=3 audio_latency_frames=384 audio_reopens=0"), status)
+                                                                     "audio_rate=44100 audio_periods=3 audio_latency_frames=384 audio_reopens=0 "
+                                                                     "mirror=off mirror_size=0x0 mirror_frames=0"), status) # headless: no Screen Mirror
                 self.assertNotIn("page=", status)
                 self.assertEqual(command("audition"), "OK audition pad 1")
                 for _ in range(300):
