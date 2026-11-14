@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -47,7 +48,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr unsigned interval_100ns = 333333;  // 30 pictures a second, in UVC's units
 constexpr unsigned buffer_count = 4;
-// The screen's flat colours and hard edges: 95 keeps them clean, at 55 kB a 1280 x 720 picture (85: 40 kB).
+// The screen's flat colours and hard edges: 95 keeps them clean. A still settings page is about 55 kB at
+// 1280 x 720, a playing project about 340 kB at 1920 x 1440 (three packets a microframe carry that at 30 fps).
 constexpr int jpeg_quality = 95;
 
 int xioctl(int fd, unsigned long request, void* argument) {
@@ -65,6 +67,7 @@ struct ScreenMirror::Worker {
     ScreenMirrorMode wanted;
     std::vector<uint32_t> offered = std::vector<uint32_t>(size_t(mirror_frame::screen_width) * mirror_frame::screen_height, 0xff000000u);
     uint64_t offered_serial = 0;
+    std::condition_variable offered_changed; // wakes the JPEG maker
     std::atomic<bool> taking {false}, need_frame {false}, running {true};
     mutable std::mutex status_lock;
     ScreenMirrorStatus shown;
@@ -87,6 +90,16 @@ struct ScreenMirror::Worker {
     uvc_streaming_control probe {}, commit {};
     int pending_control = 0;         // the control a SET_CUR's data is for
     Clock::time_point retry = Clock::now();
+
+    // JPEG sizes: a thread of their own makes the pictures, as fast as the encoder takes them (the CPU filling one
+    // slot while the encoder makes the other), and leaves the newest here; this thread sends whatever is newest at
+    // every tick, so the stream keeps its 30 pictures a second whatever one costs to make.
+    std::thread maker;
+    std::atomic<bool> making {false};
+    std::mutex jpeg_lock;
+    std::vector<uint8_t> jpeg;       // the newest JPEG made
+    std::atomic<unsigned> made_count {0}, made_max_us {0};
+    std::atomic<uint64_t> made_us {0};
     std::thread thread;
 
     explicit Worker(const ScreenMirrorMode& initial) : wanted(initial) {
@@ -233,6 +246,7 @@ struct ScreenMirror::Worker {
     // The device closed without STREAMOFF. A computer still streaming keeps the camera and sees its picture stand
     // still; the next process opening the device sends again (kernel/uvc), or the computer stops by itself.
     void close_device() {
+        stop_maker();
         unmap();
         if (fd >= 0) close(fd);
         fd = -1; streaming = false;
@@ -318,7 +332,15 @@ struct ScreenMirror::Worker {
     }
 
     void stream_on() {
-        if (format.mjpeg && !encoder.ready()) { std::string error; start_encoder(error); } // a stream resumed after a restart
+        if (format.mjpeg) {
+            if (!encoder.ready()) { std::string error; start_encoder(error); } // a stream resumed after a restart
+            start_maker();
+            // Its first picture, so that the buffers queued below carry one (an encoder takes under 50 ms).
+            for (int n = 0; n < 50; ++n) {
+                { std::lock_guard<std::mutex> guard(jpeg_lock); if (!jpeg.empty()) break; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
         set_format();
         v4l2_requestbuffers request {};
         request.count = buffer_count; request.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; request.memory = V4L2_MEMORY_MMAP;
@@ -344,6 +366,7 @@ struct ScreenMirror::Worker {
 
     void stream_off() {
         report(true);
+        stop_maker();
         int type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         xioctl(fd, VIDIOC_STREAMOFF, &type); // also answers the computer's request to stop
         mark_live(false);
@@ -372,6 +395,11 @@ struct ScreenMirror::Worker {
         auto now = Clock::now();
         double seconds = std::chrono::duration<double>(now - window.start).count();
         if (!force && seconds < 5) return;
+        if (format.mjpeg) { // the maker's pictures: made from the screen to the JPEG, the encoder's queue included
+            window.made = made_count.exchange(0);
+            window.make_ms = made_us.exchange(0) / 1000.0;
+            window.make_max_ms = made_max_us.exchange(0) / 1000.0;
+        }
         if (window.sent || window.late || window.missed) {
             char line[320];
             std::snprintf(line, sizeof line, "Screen mirror: %.1f s %ux%u: %u sent (%.1f fps), %u made (%.1f ms, max %.1f), "
@@ -385,7 +413,8 @@ struct ScreenMirror::Worker {
         window.last_back = now;
     }
 
-    // The picture for the screen offered last: made again only when it changed.
+    // YUYV: the picture for the screen offered last, made again (on this thread, under a millisecond) only when
+    // it changed.
     void refresh() {
         {
             std::lock_guard<std::mutex> guard(lock);
@@ -394,34 +423,88 @@ struct ScreenMirror::Worker {
             payload_serial = offered_serial;
         }
         auto started = Clock::now();
-        struct Made {
-            Window& w; Clock::time_point started;
-            ~Made() {
-                double ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
-                ++w.made; w.make_ms += ms; w.make_max_ms = std::max(w.make_max_ms, ms);
-            }
-        } made {window, started};
-        if (format.mjpeg) {
-            mirror_frame::to_yuyv(screen.data(), format.width, format.height, encoder.input(), encoder.stride());
-            const uint8_t* jpeg = nullptr;
-            size_t size = 0;
-            std::string error;
-            if (encoder.encode(jpeg, size, error)) payload.assign(jpeg, jpeg + std::min<size_t>(size, frame_bytes(format)));
-            else if (payload.empty()) std::cout << "Screen mirror: " << error << std::endl;
-        } else {
-            payload.resize(frame_bytes(format));
-            mirror_frame::to_yuyv(screen.data(), format.width, format.height, payload.data(), size_t(format.width) * 2);
-        }
+        payload.resize(frame_bytes(format));
+        mirror_frame::to_yuyv(screen.data(), format.width, format.height, payload.data(), size_t(format.width) * 2);
+        double ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+        ++window.made; window.make_ms += ms; window.make_max_ms = std::max(window.make_max_ms, ms);
     }
 
     void send(unsigned n) {
-        refresh();
-        size_t size = std::min(payload.size(), lengths[n]);
-        if (size) std::memcpy(memory[n], payload.data(), size);
+        size_t size = 0;
+        if (format.mjpeg) { // the newest JPEG the maker left
+            std::lock_guard<std::mutex> guard(jpeg_lock);
+            size = std::min(jpeg.size(), lengths[n]);
+            if (size) std::memcpy(memory[n], jpeg.data(), size);
+        } else {
+            refresh();
+            size = std::min(payload.size(), lengths[n]);
+            if (size) std::memcpy(memory[n], payload.data(), size);
+        }
+        if (!size) { idle.push_back(n); return; } // nothing made yet
         v4l2_buffer buffer {};
         buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = n;
         buffer.bytesused = unsigned(size);
         if (xioctl(fd, VIDIOC_QBUF, &buffer) == 0) { count_frame(); ++window.sent; window.bytes += size; }
+    }
+
+    // ---- The JPEG maker ----
+
+    void start_maker() {
+        if (making.load() || !encoder.ready()) return;
+        { std::lock_guard<std::mutex> guard(jpeg_lock); jpeg.clear(); }
+        making.store(true);
+        maker = std::thread([this] { make_pictures(); });
+    }
+
+    void stop_maker() {
+        if (!maker.joinable()) return;
+        { std::lock_guard<std::mutex> guard(lock); making.store(false); }
+        offered_changed.notify_all();
+        maker.join();
+    }
+
+    // The maker's thread: whenever the screen changed and a slot is free, fill it and hand it to the encoder; take
+    // each JPEG as it is done. With both slots busy it waits for the older one, so the CPU's part of the next
+    // picture overlaps the encoder's part of this one.
+    void make_pictures() {
+        std::vector<uint32_t> picture(screen.size());
+        uint64_t taken = ~0ull;                           // the screen's serial last handed to the encoder
+        bool busy[JpegEncoder::slots] {};
+        Clock::time_point started[JpegEncoder::slots] {};
+        unsigned in_flight = 0;
+        std::string error, said;
+        auto complain = [&](const std::string& what) { if (what != said) std::cout << "Screen mirror: " << what << std::endl; said = what; };
+        while (making.load()) {
+            bool fresh = false;
+            {
+                std::unique_lock<std::mutex> guard(lock);
+                if (!in_flight)
+                    offered_changed.wait_for(guard, std::chrono::milliseconds(100), [&] { return !making.load() || offered_serial != taken; });
+                if (in_flight < JpegEncoder::slots && offered_serial != taken) { picture = offered; taken = offered_serial; fresh = true; }
+            }
+            if (!making.load()) break;
+            if (fresh) {
+                unsigned slot = busy[0] ? 1 : 0;
+                started[slot] = Clock::now();
+                mirror_frame::to_yuyv(picture.data(), format.width, format.height, encoder.input(slot), encoder.stride());
+                if (encoder.submit(slot, error)) { busy[slot] = true; ++in_flight; }
+                else complain(error);
+                if (in_flight < JpegEncoder::slots) continue; // the screen may have changed again: fill the other slot
+            }
+            if (!in_flight) continue;
+            unsigned slot = 0;
+            const uint8_t* data = nullptr;
+            size_t size = 0;
+            auto result = encoder.collect(slot, data, size, in_flight == JpegEncoder::slots ? 1000 : 5, error);
+            if (result == JpegEncoder::Collect::Pending) continue;
+            if (result == JpegEncoder::Collect::Done) {
+                { std::lock_guard<std::mutex> guard(jpeg_lock); jpeg.assign(data, data + std::min<size_t>(size, frame_bytes(format))); }
+                auto us = unsigned(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started[slot]).count());
+                made_count.fetch_add(1); made_us.fetch_add(us);
+                if (us > made_max_us.load()) made_max_us.store(us);
+            } else complain(error);
+            busy[slot] = false; --in_flight;
+        }
     }
 
     void returned() {
@@ -504,6 +587,7 @@ void ScreenMirror::offer(const juce::Image& image) {
         std::memcpy(worker->offered.data() + size_t(row) * mirror_frame::screen_width, bitmap.getLinePointer(int(row)), mirror_frame::screen_width * 4);
     ++worker->offered_serial;
     worker->need_frame.store(false);
+    worker->offered_changed.notify_one();
 }
 
 ScreenMirrorStatus ScreenMirror::status() const {

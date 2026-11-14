@@ -63,15 +63,18 @@ bool JpegEncoder::open(unsigned w, unsigned h, int quality, std::string& error) 
     xioctl(fd, VIDIOC_S_CTRL, &control); // its default when refused
     for (int k = 0; k < 2; ++k) {
         v4l2_requestbuffers request {};
-        request.count = 1; request.type = kinds[k]; request.memory = V4L2_MEMORY_MMAP;
-        if (xioctl(fd, VIDIOC_REQBUFS, &request) < 0 || request.count < 1) return fail("buffers");
-        v4l2_plane plane {};
-        v4l2_buffer buffer {};
-        buffer.type = kinds[k]; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = 0; buffer.m.planes = &plane; buffer.length = 1;
-        if (xioctl(fd, VIDIOC_QUERYBUF, &buffer) < 0) return fail("buffer");
-        lengths[k] = plane.length;
-        memory[k] = mmap(nullptr, plane.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, plane.m.mem_offset);
-        if (memory[k] == MAP_FAILED) { memory[k] = nullptr; return fail("map"); }
+        request.count = slots; request.type = kinds[k]; request.memory = V4L2_MEMORY_MMAP;
+        if (xioctl(fd, VIDIOC_REQBUFS, &request) < 0 || request.count < slots) return fail("buffers");
+        for (unsigned n = 0; n < slots; ++n) {
+            v4l2_plane plane {};
+            v4l2_buffer buffer {};
+            buffer.type = kinds[k]; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = n; buffer.m.planes = &plane; buffer.length = 1;
+            if (xioctl(fd, VIDIOC_QUERYBUF, &buffer) < 0) return fail("buffer");
+            void*& memory = k == 0 ? in[n] : out[n];
+            (k == 0 ? in_length[n] : out_length[n]) = plane.length;
+            memory = mmap(nullptr, plane.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, plane.m.mem_offset);
+            if (memory == MAP_FAILED) { memory = nullptr; return fail("map"); }
+        }
         unsigned kind = kinds[k];
         if (xioctl(fd, VIDIOC_STREAMON, &kind) < 0) return fail("start");
     }
@@ -79,39 +82,49 @@ bool JpegEncoder::open(unsigned w, unsigned h, int quality, std::string& error) 
 }
 
 void JpegEncoder::close() {
-    for (int k = 0; k < 2; ++k) {
-        if (memory[k]) munmap(memory[k], lengths[k]);
-        memory[k] = nullptr; lengths[k] = 0;
+    for (unsigned n = 0; n < slots; ++n) {
+        if (in[n]) munmap(in[n], in_length[n]);
+        if (out[n]) munmap(out[n], out_length[n]);
+        in[n] = out[n] = nullptr; in_length[n] = out_length[n] = 0;
     }
     if (fd >= 0) ::close(fd); // closing stops both queues and frees their buffers
     fd = -1;
 }
 
-bool JpegEncoder::encode(const uint8_t*& jpeg, size_t& size, std::string& error) {
+bool JpegEncoder::submit(unsigned slot, std::string& error) {
     if (fd < 0) { error = "JPEG encoder: not open"; return false; }
+    slot %= slots;
+    // The picture and the buffer its JPEG goes to, in the same slot: mem2mem pairs them in the order queued.
     for (int k = 0; k < 2; ++k) {
         v4l2_plane plane {};
         v4l2_buffer buffer {};
-        buffer.type = kinds[k]; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = 0; buffer.m.planes = &plane; buffer.length = 1;
+        buffer.type = kinds[k]; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = slot; buffer.m.planes = &plane; buffer.length = 1;
         plane.bytesused = k == 0 ? unsigned(input_stride * height) : 0;
-        plane.length = unsigned(lengths[k]);
+        plane.length = unsigned(k == 0 ? in_length[slot] : out_length[slot]);
         if (xioctl(fd, VIDIOC_QBUF, &buffer) < 0) { error = std::string("JPEG encoder: queue: ") + std::strerror(errno); return false; }
     }
+    return true;
+}
+
+JpegEncoder::Collect JpegEncoder::collect(unsigned& slot, const uint8_t*& jpeg, size_t& size, int timeout_ms, std::string& error) {
+    if (fd < 0) { error = "JPEG encoder: not open"; return Collect::Failed; }
     pollfd waiting {fd, POLLIN, 0};
     int ready;
-    do ready = poll(&waiting, 1, 1000); while (ready < 0 && errno == EINTR);
-    if (ready <= 0) { error = "JPEG encoder: no picture within 1 s"; return false; }
+    do ready = poll(&waiting, 1, timeout_ms); while (ready < 0 && errno == EINTR);
+    if (ready == 0) return Collect::Pending;
+    if (ready < 0) { error = std::string("JPEG encoder: wait: ") + std::strerror(errno); return Collect::Failed; }
     bool ok = true;
     for (int k = 1; k >= 0; --k) {
         v4l2_plane plane {};
         v4l2_buffer buffer {};
         buffer.type = kinds[k]; buffer.memory = V4L2_MEMORY_MMAP; buffer.m.planes = &plane; buffer.length = 1;
-        if (xioctl(fd, VIDIOC_DQBUF, &buffer) < 0) { error = std::string("JPEG encoder: take: ") + std::strerror(errno); return false; }
+        if (xioctl(fd, VIDIOC_DQBUF, &buffer) < 0) { error = std::string("JPEG encoder: take: ") + std::strerror(errno); return Collect::Failed; }
         if (k == 1) {
-            jpeg = static_cast<const uint8_t*>(memory[1]); size = plane.bytesused;
+            slot = buffer.index % slots;
+            jpeg = static_cast<const uint8_t*>(out[slot]); size = plane.bytesused;
             ok = !(buffer.flags & V4L2_BUF_FLAG_ERROR) && size > 2 && jpeg[0] == 0xff && jpeg[1] == 0xd8;
         }
     }
-    if (!ok) error = "JPEG encoder: bad picture";
-    return ok;
+    if (!ok) { error = "JPEG encoder: bad picture"; return Collect::Failed; }
+    return Collect::Done;
 }

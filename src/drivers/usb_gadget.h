@@ -90,11 +90,13 @@ struct MirrorFormat {
     // A picture's bytes at most: YUYV's two a pixel, a JPEG's one (the screen's JPEGs are far smaller).
     unsigned frame_bytes() const { return mjpeg ? width * height : width * height * 2; }
     // The streaming endpoint's bytes a microframe (125 us): one 1024-byte packet (8 MB/s), or two or three for
-    // a YUYV picture that needs more at 30 fps (640 x 480: 2304 bytes, so 3072, 24.6 MB/s). USB 2.0 keeps
-    // 6000 bytes a microframe for these; the 18-channel audio takes about 1040 at 96 kHz.
+    // a YUYV picture that needs more at 30 fps (640 x 480: 2304 bytes, so 3072, 24.6 MB/s). A JPEG of a playing
+    // project is about 340 kB at 1920 x 1440 (10 MB/s at 30 fps; one packet held it to 24 fps): JPEG gets three.
+    // USB 2.0 keeps 6000 bytes a microframe for these; the 18-channel audio takes about 1040 at 96 kHz.
     unsigned packet_bytes() const {
+        if (mjpeg) return 3072;
         unsigned need = unsigned(uint64_t(frame_bytes()) * 30 / 8000) + 16; // + the payload headers
-        return mjpeg || need <= 1024 ? 1024 : need <= 2048 ? 2048 : 3072;
+        return need <= 1024 ? 1024 : need <= 2048 ? 2048 : 3072;
     }
 };
 enum class MirrorLink { Linked, CardShared, Failed };
