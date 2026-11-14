@@ -337,11 +337,13 @@ struct ScreenMirror::Worker {
         // STREAMON also finishes the computer's request to start (kernel/uvc held its status for this).
         if (xioctl(fd, VIDIOC_STREAMON, &type) < 0) { set_state(MirrorState::Failed, std::string("webcam start: ") + std::strerror(errno)); return; }
         streaming = true;
+        window = Window {};
         mark_live(true);
         set_state(MirrorState::Streaming);
     }
 
     void stream_off() {
+        report(true);
         int type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         xioctl(fd, VIDIOC_STREAMOFF, &type); // also answers the computer's request to stop
         mark_live(false);
@@ -355,6 +357,34 @@ struct ScreenMirror::Worker {
 
     // ---- Pictures ----
 
+    // How the stream went over the last few seconds, in the service log while streaming: pictures sent and made
+    // (the screen changed), what making one cost, timer ticks with no buffer back from the computer yet or missed
+    // while a picture was being made, buffers the kernel gave back marked bad (dropped on the way), and the
+    // longest wait between two buffers coming back.
+    struct Window {
+        Clock::time_point start = Clock::now(), last_back;
+        unsigned sent = 0, made = 0, late = 0, missed = 0, bad = 0;
+        double make_ms = 0, make_max_ms = 0, gap_max_ms = 0;
+        size_t bytes = 0;
+    } window;
+
+    void report(bool force = false) {
+        auto now = Clock::now();
+        double seconds = std::chrono::duration<double>(now - window.start).count();
+        if (!force && seconds < 5) return;
+        if (window.sent || window.late || window.missed) {
+            char line[320];
+            std::snprintf(line, sizeof line, "Screen mirror: %.1f s %ux%u: %u sent (%.1f fps), %u made (%.1f ms, max %.1f), "
+                          "%u late, %u missed ticks, %u bad, longest gap %.0f ms, %zu kB a picture",
+                          seconds, format.width, format.height, window.sent, window.sent / std::max(seconds, 0.001), window.made,
+                          window.made ? window.make_ms / window.made : 0.0, window.make_max_ms, window.late, window.missed, window.bad,
+                          window.gap_max_ms, window.sent ? window.bytes / window.sent / 1024 : 0);
+            std::cout << line << std::endl;
+        }
+        window = Window {};
+        window.last_back = now;
+    }
+
     // The picture for the screen offered last: made again only when it changed.
     void refresh() {
         {
@@ -363,6 +393,14 @@ struct ScreenMirror::Worker {
             screen = offered;
             payload_serial = offered_serial;
         }
+        auto started = Clock::now();
+        struct Made {
+            Window& w; Clock::time_point started;
+            ~Made() {
+                double ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+                ++w.made; w.make_ms += ms; w.make_max_ms = std::max(w.make_max_ms, ms);
+            }
+        } made {window, started};
         if (format.mjpeg) {
             mirror_frame::to_yuyv(screen.data(), format.width, format.height, encoder.input(), encoder.stride());
             const uint8_t* jpeg = nullptr;
@@ -383,13 +421,20 @@ struct ScreenMirror::Worker {
         v4l2_buffer buffer {};
         buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = n;
         buffer.bytesused = unsigned(size);
-        if (xioctl(fd, VIDIOC_QBUF, &buffer) == 0) count_frame();
+        if (xioctl(fd, VIDIOC_QBUF, &buffer) == 0) { count_frame(); ++window.sent; window.bytes += size; }
     }
 
     void returned() {
         v4l2_buffer buffer {};
         buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP;
-        while (xioctl(fd, VIDIOC_DQBUF, &buffer) == 0) idle.push_back(buffer.index);
+        while (xioctl(fd, VIDIOC_DQBUF, &buffer) == 0) {
+            idle.push_back(buffer.index);
+            auto now = Clock::now();
+            if (buffer.flags & V4L2_BUF_FLAG_ERROR) ++window.bad; // a request missed its microframe: the computer drops it
+            if (window.last_back != Clock::time_point {})
+                window.gap_max_ms = std::max(window.gap_max_ms, std::chrono::duration<double, std::milli>(now - window.last_back).count());
+            window.last_back = now;
+        }
     }
 
     // ---- The thread ----
@@ -424,7 +469,12 @@ struct ScreenMirror::Worker {
             if (waits[1].revents & POLLIN) {
                 uint64_t ticks = 0;
                 if (read(timer, &ticks, sizeof ticks) < 0) ticks = 0;
-                if (fd >= 0 && streaming && !idle.empty()) { unsigned n = idle.back(); idle.pop_back(); send(n); }
+                if (fd >= 0 && streaming) {
+                    if (ticks > 1) window.missed += unsigned(ticks - 1); // this thread was busy past a tick
+                    if (idle.empty()) ++window.late;                      // every buffer still with the computer
+                    else { unsigned n = idle.back(); idle.pop_back(); send(n); }
+                    report();
+                }
             }
         }
         close_device();
