@@ -272,7 +272,13 @@ struct ScreenMirror::Worker {
             case UVC_EVENT_DATA: take_data(uvc->data); break;
             case UVC_EVENT_STREAMON: stream_on(); break;
             case UVC_EVENT_STREAMOFF: stream_off(); break;
-            case UVC_EVENT_DISCONNECT: if (streaming) stream_off(); break;
+            case UVC_EVENT_DISCONNECT:
+                // The computer went (unplugged, or the gadget rebinding: the card lent, a rate, another size). No
+                // STREAMOFF: with no request of the computer's waiting it only trips usb_composite_setup_continue's
+                // warning. Closing frees the buffers; the device opens again within a second.
+                close_device();
+                set_state(MirrorState::Waiting);
+                return;
             default: break;
             }
         }
