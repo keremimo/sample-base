@@ -201,7 +201,7 @@ class RecoveryScriptTests(unittest.TestCase):
                                env={**os.environ, "FIXTURE_STATE": state, "FIXTURE_CALLS": str(calls)})
                 self.assertEqual(calls.exists(), state in ("running", "degraded"))
                 if calls.exists():
-                    self.assertEqual(calls.read_text().strip(), "start ac50.service")
+                    self.assertEqual(calls.read_text().strip().split("\n")[-2:], ["start az0x-webserver.service", "start ac50.service"])
 
 
     def test_panel_given_back_to_stock_driver_before_stock(self):

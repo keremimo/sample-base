@@ -93,4 +93,7 @@ if [ -e "$SPI/driver_override" ] && [ "$(cat "$SPI/driver_override" 2>/dev/null)
     { [ -e "$SPI/driver" ] || echo spi3.0 > /sys/bus/spi/drivers/st7796s/bind; } 2>/dev/null || true
 fi
 rmmod sample_base_panel 2>/dev/null || true
+# An app may stop the stock web server to serve its own page on port 80
+# (Melodee's, src/melodee/web/); it comes back with the stock app.
+/bin/systemctl start az0x-webserver.service 2>/dev/null || true
 exec /bin/systemctl start ac50.service
