@@ -133,6 +133,10 @@ int main(int argc, char** argv) {
     assert(slurp(frame + "/dwMaxBitRate") == "221184000\n" && slurp(webcam + "/streaming_maxpacket") == "3072\n");
     MirrorFormat found;
     assert(gadget_mirror_format(found, root) && found == (MirrorFormat {1280, 720, true})); // what a restarted app takes over
+    assert(gadget_mirror_made_for(found, root));
+    put(webcam + "/streaming_maxpacket", "1024\n"); // as an older build made it: made anew, the frame kept
+    assert(!gadget_mirror_made_for(found, root) && gadget_add_mirror(found, error, root) == MirrorLink::Linked);
+    assert(gadget_mirror_made_for(found, root) && slurp(webcam + "/streaming_maxpacket") == "3072\n");
     assert(points_at(webcam + "/streaming/header/h/m", webcam + "/streaming/mjpeg/m"));
     for (auto speed : {"fs", "hs", "ss"}) assert(points_at(webcam + "/streaming/class/" + speed + "/h", webcam + "/streaming/header/h"));
     for (auto speed : {"fs", "ss"}) assert(points_at(webcam + "/control/class/" + speed + "/h", webcam + "/control/header/h"));

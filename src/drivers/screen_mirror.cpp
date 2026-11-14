@@ -183,6 +183,8 @@ struct ScreenMirror::Worker {
         if (!gadget_mirror_format(linked)) { applied = {}; set_state(MirrorState::Off); return; }
         format = linked; fallback = false;
         applied = {true, linked.width, linked.height};
+        // Made by an older build (another packet size): made anew, once no computer shows it.
+        if (!gadget_mirror_made_for(linked)) applied.width = 0;
         std::string error;
         if (format.mjpeg) start_encoder(error);
         settle_until = Clock::now() + std::chrono::milliseconds(1500);

@@ -386,11 +386,14 @@ bool make_mirror(const std::string& function, const MirrorFormat& format, std::s
     return ok;
 }
 
-// What the function was made for, read back from its frame.
+// What the function was made for, read back from its frame and endpoint (a function an older build made may have
+// another packet size).
 bool mirror_made_for(const std::string& function, const MirrorFormat& format) {
-    std::string frame = function + (format.mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height;
+    std::string frame = function + (format.mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height, packet;
     return read_line(frame + "/wWidth", width) && read_line(frame + "/wHeight", height) &&
-           width == std::to_string(format.width) && height == std::to_string(format.height);
+           read_line(function + "/streaming_maxpacket", packet) &&
+           width == std::to_string(format.width) && height == std::to_string(format.height) &&
+           packet == std::to_string(format.packet_bytes());
 }
 } // namespace
 
@@ -441,6 +444,12 @@ bool gadget_mirror_linked(const std::string& root) {
 }
 
 bool gadget_mirror_live(const std::string& marker) { return access(marker.c_str(), F_OK) == 0; }
+
+bool gadget_mirror_made_for(const MirrorFormat& format, const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
+    std::string gadget, config;
+    return first_gadget(root, gadget, config) && mirror_made_for(gadget + "/functions/" + mirror_function, format);
+}
 
 bool gadget_mirror_format(MirrorFormat& format, const std::string& root) {
     std::lock_guard<std::recursive_mutex> lock(relinking);

@@ -108,6 +108,8 @@ constexpr const char* mirror_in_use = "the camera is in use on the computer";
 bool gadget_mirror_live(const std::string& marker = mirror_live_marker);
 // The webcam function's picture size and kind when it exists, linked or not.
 bool gadget_mirror_format(MirrorFormat& format, const std::string& root = gadget_root);
+// The function exists and was made for `format` as this build makes it (its packet size too).
+bool gadget_mirror_made_for(const MirrorFormat& format, const std::string& root = gadget_root);
 // Makes the function for `format` (one made for another size goes first) and
 // links it; the gadget rebinds unless it is linked for `format` already.
 // Needs kernel/uvc's module loaded. CardShared: the drive is linked, nothing
