@@ -9,11 +9,12 @@ namespace juce { class Image; }
 
 // Screen Mirror: the screen as a USB webcam over USB-C, so a computer (or a
 // tablet that takes USB cameras) shows it in any camera app. The MPC offers
-// one picture size, the one asked for: 320 x 240 is the screen itself
-// (YUYV), the larger sizes are the screen scaled by a whole number
-// (drivers/mirror_frame.h) and made JPEG by the RK3566's encoder
-// (drivers/jpeg_encoder.h); 30 pictures a second, a picture made only when
-// the screen changed.
+// one picture size, the one asked for, always the screen scaled by a whole
+// number (drivers/mirror_frame.h): 320 x 240 (the screen itself) and
+// 640 x 480 as YUYV, every pixel exact; the larger sizes made JPEG by the
+// RK3566's encoder (drivers/jpeg_encoder.h), USB 2.0 having no room for them
+// uncompressed. 30 pictures a second, a picture made only when the screen
+// changed.
 //
 // Its own thread does the work: loads kernel/uvc's webcam function
 // (sample_base_uvc, from inside the binary) and, for JPEG, kernel/vepu's
@@ -45,16 +46,18 @@ const char* mirror_state_name(MirrorState state);
 struct ScreenMirrorStatus {
     MirrorState state = MirrorState::Off;
     MirrorFormat format;    // what the computer is offered
-    bool fallback = false;  // a larger size was asked for and no encoder came up: 320 x 240 instead
+    bool fallback = false;  // a JPEG size was asked for and no encoder came up: 640 x 480 YUYV instead
     uint64_t frames = 0;    // pictures sent since start
     std::string error;
 };
 
 class ScreenMirror {
 public:
-    // The sizes offered (the app's setting picks one): 320 x 240 as YUYV, the rest as MJPEG.
-    static constexpr unsigned size_count = 4;
-    static constexpr unsigned widths[size_count] {320, 640, 1280, 1280}, heights[size_count] {240, 480, 720, 960};
+    // The sizes offered (the app's setting picks one), each the screen times a whole number: 1, 2 (YUYV), 3 (with
+    // black at the sides), 4, 6, 8 (MJPEG).
+    static constexpr unsigned size_count = 6;
+    static constexpr unsigned widths[size_count] {320, 640, 1280, 1280, 1920, 2560}, heights[size_count] {240, 480, 720, 960, 1440, 1920};
+    static bool uncompressed(unsigned width) { return width <= 640; }
 
     // `initial`: the app's mode at start, so that a restart keeps a webcam
     // already linked for it (no rebind) instead of taking it out first.

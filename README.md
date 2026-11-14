@@ -268,9 +268,9 @@ hooks, their threads and how to wire in an app.
   can send 16 mono track stems after the main mix
   ([src/drivers/usb_gadget.h](src/drivers/usb_gadget.h)).
 - **Screen Mirror** ([src/drivers/screen_mirror.h](src/drivers/screen_mirror.h))
-  offers the screen to a computer as a USB webcam, 320 × 240 up to
-  1280 × 960 at 30 fps, the larger sizes scaled by whole numbers and made
-  JPEG by the RK3566's own encoder; an app turns it on with
+  offers the screen to a computer as a USB webcam at 30 fps, always scaled
+  by a whole number: 320 × 240 and 640 × 480 uncompressed, 1280 × 720 to
+  2560 × 1920 made JPEG by the RK3566's own encoder; an app turns it on with
   `App::screen_mirror()`.
 - Fonts come from the MPC's existing Liberation Sans installation.
 

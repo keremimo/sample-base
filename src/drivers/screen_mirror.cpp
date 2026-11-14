@@ -46,9 +46,9 @@ const char* mirror_state_name(MirrorState state) {
 namespace {
 using Clock = std::chrono::steady_clock;
 constexpr unsigned interval_100ns = 333333;  // 30 pictures a second, in UVC's units
-constexpr unsigned max_payload = 1024;       // the streaming endpoint's packet (gadget_add_mirror())
 constexpr unsigned buffer_count = 4;
-constexpr int jpeg_quality = 85;
+// The screen's flat colours and hard edges: 95 keeps them clean, at 55 kB a 1280 x 720 picture (85: 40 kB).
+constexpr int jpeg_quality = 95;
 
 int xioctl(int fd, unsigned long request, void* argument) {
     int result;
@@ -56,7 +56,7 @@ int xioctl(int fd, unsigned long request, void* argument) {
     return result;
 }
 
-unsigned frame_bytes(const MirrorFormat& f) { return f.mjpeg ? f.width * f.height : f.width * f.height * 2; }
+unsigned frame_bytes(const MirrorFormat& f) { return f.frame_bytes(); }
 } // namespace
 
 struct ScreenMirror::Worker {
@@ -139,13 +139,13 @@ struct ScreenMirror::Worker {
             set_state(MirrorState::Off);
             return;
         }
-        format = {mode.width, mode.height, !(mode.width == 320 && mode.height == 240)};
+        format = {mode.width, mode.height, !ScreenMirror::uncompressed(mode.width)};
         fallback = false;
         set_state(MirrorState::Starting);
         if (!load_webcam(error)) { set_state(MirrorState::Failed, error); return; }
         if (format.mjpeg && !start_encoder(error)) {
-            std::cout << "Screen mirror: " << error << ", 320 x 240 instead" << std::endl;
-            format = {320, 240, false}; fallback = true;
+            std::cout << "Screen mirror: " << error << ", 640 x 480 instead" << std::endl;
+            format = {640, 480, false}; fallback = true;
         }
         link();
     }
@@ -219,7 +219,7 @@ struct ScreenMirror::Worker {
         c.bmHint = 1; c.bFormatIndex = 1; c.bFrameIndex = 1;
         c.dwFrameInterval = interval_100ns;
         c.dwMaxVideoFrameSize = frame_bytes(format);
-        c.dwMaxPayloadTransferSize = max_payload;
+        c.dwMaxPayloadTransferSize = format.packet_bytes(); // a microframe's, the endpoint's packets together
         c.bmFramingInfo = 3; c.bPreferedVersion = 1; c.bMinVersion = 1; c.bMaxVersion = 1;
         return c;
     }

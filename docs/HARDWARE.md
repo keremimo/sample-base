@@ -418,20 +418,35 @@ Windows and Linux use it without a driver; so do iPads with USB-C (iPadOS
 the size through `App::screen_mirror()`; the runtime does the rest on its
 own thread.
 
-| Size | Sent as | Made by |
-| --- | --- | --- |
-| 320 × 240 | YUYV, the screen itself | the CPU (about 0.3 ms a picture) |
-| 640 × 480 | MJPEG, the screen twice | the CPU scales and converts (1.1 ms), the encoder makes the JPEG (3.0 ms) |
-| 1280 × 720 | MJPEG, the screen three times, black at the sides | 1.8 ms and 8.6 ms |
-| 1280 × 960 | MJPEG, the screen four times | 2.3 ms and 11.4 ms |
+| Size | Scale | Sent as | USB at 30 fps |
+| --- | --- | --- | --- |
+| 320 × 240 | 1 | YUYV, every pixel exact | 4.6 MB/s, one 1024-byte packet a microframe |
+| 640 × 480 | 2 | YUYV, every pixel exact | 18.4 MB/s, three packets a microframe |
+| 1280 × 720 | 3, black at the sides | MJPEG, quality 95 | about 55 kB a picture |
+| 1280 × 960 | 4 | MJPEG | about 60 kB |
+| 1920 × 1440 | 6 | MJPEG | |
+| 2560 × 1920 | 8 | MJPEG | |
 
-30 pictures a second; a picture is made only when the screen changed,
-otherwise the last one is sent again. Measured on the MPC (2026-11-14):
-continuously changing at 30 fps, 1280 × 960 costs 7.4 % of one core, the
-JPEG encoder itself 0.15 ms of CPU a picture. Scaling is by whole numbers, so
-each screen pixel stays a sharp square; at an even scale each YUYV pair is
-one screen pixel and its colour stays exact
-([src/drivers/mirror_frame.h](../src/drivers/mirror_frame.h)).
+Every size is the screen scaled by a whole number, so each screen pixel
+stays a sharp square ([src/drivers/mirror_frame.h](../src/drivers/mirror_frame.h));
+the computer's own window may still scale the picture, which the larger
+sizes leave less to do. At an even scale each YUYV pair is one screen pixel,
+so its colour stays exact. 30 pictures a second; a picture is made only when
+the screen changed, otherwise the last one is sent again. Measured on the MPC
+(2026-11-14): changing at 30 fps, 1280 × 960 costs 7.4 % of one core (the
+CPU scales and converts in 2.3 ms, the encoder takes 11.4 ms and 0.15 ms of
+CPU), 1280 × 720 1.8 and 8.6 ms, 640 × 480 1.1 ms.
+
+**USB bandwidth.** USB 2.0 keeps 6000 bytes of each 125 µs microframe for
+isochronous and interrupt endpoints. The 18-channel audio to the computer
+takes 504 bytes at 48 kHz (936 at 96 kHz), the computer's stereo to the MPC
+56 (104), its feedback 4; the webcam takes 1024 bytes, or 3072 for
+640 × 480 YUYV (`MirrorFormat::packet_bytes()`): about 4100 of the 6000 at
+96 kHz. The computer reserves these when a stream starts, so a webcam that
+did not fit would fail to start rather than take from the audio; bulk
+traffic (the network, the card) shares what is left. Uncompressed above
+640 × 480 is beyond one endpoint (960 × 720 YUYV would need 41 MB/s; three
+packets a microframe carry 24.6 MB/s), so those sizes are JPEG.
 
 **The webcam function.** The MPC's kernel has the gadget's UVC function
 switched off (`# CONFIG_USB_CONFIGFS_F_UVC is not set`), though V4L2 and
@@ -449,8 +464,8 @@ The function is `uvc.screen` (`gadget_add_mirror()`,
 [src/drivers/usb_gadget.h](../src/drivers/usb_gadget.h)): one format and one
 frame, the size asked for, 333333 × 100 ns intervals; no interrupt endpoint;
 an isochronous streaming endpoint of 1024-byte packets, one a microframe
-(8 MB/s: 320 × 240 YUYV at 30 fps needs 4.6 MB/s, a 1280 × 960 JPEG of the
-screen is about 120 kB). It is linked after the UAC2 function and before
+(8 MB/s) or three for 640 × 480 YUYV (24.6 MB/s, which the controller's
+3104-byte FIFO holds: 3 × (1024 + 8) + 8). It is linked after the UAC2 function and before
 USB networking: the interfaces are audio (0–2), webcam (3–4), MIDI, then
 NCM, and the endpoints IN 1–2 audio, 3 the webcam, 4 MIDI, 5–6 NCM, so
 NCM's notify endpoint keeps the 336-byte FIFO 6 (above). macOS knows the
@@ -477,8 +492,8 @@ hantro-vpu` then registers `rockchip,rk3568-vepu-enc`, a V4L2 mem2mem
 device (YUYV in, a whole JPEG out; [src/drivers/jpeg_encoder.h](../src/drivers/jpeg_encoder.h)).
 The module has no exit: removing the device (`rmmod`) hung the kernel and
 the MPC rebooted itself (2026-11-14, no log kept). It stays until the next
-boot. When no encoder comes up, a larger size falls back to 320 × 240
-(`mirror_size=320x240-fallback` in `status`).
+boot. When no encoder comes up, a JPEG size falls back to 640 × 480 YUYV
+(`mirror_size=640x480-fallback` in `status`).
 
 Turning Screen Mirror on or off, or another size, rebinds the gadget like a
 rate change (about a second without USB). When the app stops, the webcam

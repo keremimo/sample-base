@@ -20,6 +20,8 @@ int main() {
     p = place(640, 480); assert(p.scale == 2 && p.x == 0 && p.y == 0);
     p = place(1280, 960); assert(p.scale == 4 && p.x == 0 && p.y == 0);
     p = place(320, 240); assert(p.scale == 1 && p.x == 0 && p.y == 0);
+    p = place(1920, 1440); assert(p.scale == 6 && p.x == 0 && p.y == 0);
+    p = place(2560, 1920); assert(p.scale == 8 && p.x == 0 && p.y == 0);
 
     uint8_t y = 0, u = 0, v = 0;
     yuv(0xff000000u, y, u, v); assert(y == 16 && u == 128 && v == 128);

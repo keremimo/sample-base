@@ -140,7 +140,12 @@ int main(int argc, char** argv) {
     assert(stat((webcam + "/kept").c_str(), &info) != 0 && stat((webcam + "/streaming/mjpeg/m").c_str(), &info) != 0);
     assert(slurp(webcam + "/streaming/uncompressed/u/f/wWidth") == "320\n");
     assert(slurp(webcam + "/streaming/uncompressed/u/f/dwMaxVideoFrameBufferSize") == "153600\n");
-    assert(gadget_mirror_linked(root) && linked());
+    assert(slurp(webcam + "/streaming_maxpacket") == "1024\n" && gadget_mirror_linked(root) && linked());
+    // 640 x 480 YUYV needs 18.4 MB/s: three packets a microframe; a JPEG of any size one.
+    assert((MirrorFormat {640, 480, false}.packet_bytes() == 3072 && MirrorFormat {320, 240, false}.packet_bytes() == 1024));
+    assert((MirrorFormat {2560, 1920, true}.packet_bytes() == 1024 && MirrorFormat {2560, 1920, true}.frame_bytes() == 4915200));
+    assert(gadget_add_mirror({640, 480, false}, error, root) == MirrorLink::Linked && slurp(webcam + "/streaming_maxpacket") == "3072\n");
+    assert(gadget_add_mirror({320, 240, false}, error, root) == MirrorLink::Linked && slurp(webcam + "/streaming_maxpacket") == "1024\n");
 
     // The drive puts the webcam out (the controller has no FIFO for a seventh IN endpoint) and brings it back;
     // asked for meanwhile, the webcam waits.

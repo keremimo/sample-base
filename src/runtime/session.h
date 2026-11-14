@@ -59,7 +59,7 @@ struct Session {
 
     // Screen Mirror (drivers/screen_mirror.h), written by the screen thread:
     // a MirrorState, the picture size offered, whether it is JPEG, whether a
-    // larger size fell back to 320 x 240 (no encoder) and the pictures sent.
+    // JPEG size fell back to 640 x 480 YUYV (no encoder) and the pictures sent.
     struct Mirror {
         std::atomic<uint8_t> state {0};
         std::atomic<uint16_t> width {0}, height {0};

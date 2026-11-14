@@ -355,16 +355,17 @@ bool storage_linked(const std::vector<Link>& links) {
 
 // The webcam function for one picture size, unlinked (kernel/uvc's
 // configfs: Documentation/usb/gadget-uvc.rst). No interrupt endpoint; the
-// streaming endpoint's packets are 1024 bytes, one a microframe (8 MB/s):
-// 320 x 240 YUYV at 30 fps is 4.6 MB/s, a 1280 x 960 MJPEG frame of the
-// screen about 120 kB.
+// streaming endpoint's packets are 1024 bytes, up to three a microframe
+// (MirrorFormat::packet_bytes()): 320 x 240 YUYV at 30 fps is 4.6 MB/s,
+// 640 x 480 YUYV 18.4 MB/s, a 2560 x 1920 JPEG of the screen about 100 kB.
+// Three packets still fit the controller's 3104-byte FIFO (3 x (1024 + 8) + 8).
 bool make_mirror(const std::string& function, const MirrorFormat& format, std::string& error) {
-    unsigned frame_bytes = format.mjpeg ? format.width * format.height : format.width * format.height * 2;
+    unsigned frame_bytes = format.frame_bytes();
     std::string kind = format.mjpeg ? "mjpeg" : "uncompressed", short_name = format.mjpeg ? "m" : "u";
     std::string control = function + "/control", streaming = function + "/streaming";
     std::string picture = streaming + "/" + kind + "/" + short_name, frame = picture + "/f";
     std::string bits = std::to_string(uint64_t(frame_bytes) * 8 * 30);
-    bool ok = make_dirs(function, error) && put(function + "/streaming_maxpacket", "1024\n", error) &&
+    bool ok = make_dirs(function, error) && put(function + "/streaming_maxpacket", std::to_string(format.packet_bytes()) + "\n", error) &&
               put(function + "/streaming_interval", "1\n", error) && put(function + "/function_name", "MPC Sample Screen\n", error) &&
               make_dirs(control + "/header/h", error) && make_dirs(control + "/class/fs", error) && make_dirs(control + "/class/ss", error) &&
               make_dirs(frame, error) && put(frame + "/wWidth", std::to_string(format.width) + "\n", error) &&
