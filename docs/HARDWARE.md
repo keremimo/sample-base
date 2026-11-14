@@ -418,35 +418,56 @@ Windows and Linux use it without a driver; so do iPads with USB-C (iPadOS
 the size through `App::screen_mirror()`; the runtime does the rest on its
 own thread.
 
-| Size | Scale | Sent as | USB at 30 fps |
+| Size | Scale | 30 fps | 60 fps |
 | --- | --- | --- | --- |
-| 320 × 240 | 1 | YUYV, every pixel exact | 4.6 MB/s, one 1024-byte packet a microframe |
-| 640 × 480 | 2 | YUYV, every pixel exact | 18.4 MB/s, three packets a microframe |
-| 1280 × 720 | 3, black at the sides | MJPEG, quality 95 | about 55 kB a picture |
-| 1280 × 960 | 4 | MJPEG | about 60 kB |
-| 1920 × 1440 | 6 | MJPEG | |
-| 2560 × 1920 | 8 | MJPEG | |
+| 320 × 240 | 1 | YUYV, 4.6 MB/s | YUYV, 9.2 MB/s |
+| 640 × 480 | 2 | YUYV, 18.4 MB/s | MJPEG |
+| 1280 × 720 | 3, black at the sides | MJPEG | MJPEG |
+| 1280 × 960 | 4 | MJPEG | MJPEG |
 
 Every size is the screen scaled by a whole number, so each screen pixel
 stays a sharp square ([src/drivers/mirror_frame.h](../src/drivers/mirror_frame.h));
-the computer's own window may still scale the picture, which the larger
-sizes leave less to do. At an even scale each YUYV pair is one screen pixel,
-so its colour stays exact. 30 pictures a second; a picture is made only when
-the screen changed, otherwise the last one is sent again. Measured on the MPC
-(2026-11-14): changing at 30 fps, 1280 × 960 costs 7.4 % of one core (the
-CPU scales and converts in 2.3 ms, the encoder takes 11.4 ms and 0.15 ms of
-CPU), 1280 × 720 1.8 and 8.6 ms, 640 × 480 1.1 ms.
+the computer's own window may still scale the picture. YUYV is exact to
+the pixel (at an even scale each YUYV pair is one screen pixel, so its
+colour stays exact) and is used wherever one endpoint carries it; JPEG is
+quality 95. Larger sizes were tried and taken out: 1920 × 1440 needed 34 ms
+a picture (encoder 26 ms, CPU 8 ms), more than a frame at 60 fps.
+
+**Making the pictures.** A thread of its own makes each picture when the
+screen changed, at most once a frame of the stream (a 60 fps screen feeds a
+30 fps stream every other picture): YUYV at once, JPEG through the encoder
+with two slots, the CPU filling one (1.1 ms at 640 × 480, 2.3 ms at
+1280 × 960, writing uncached memory) while the encoder makes the other
+(3.0 and 11.4 ms). It keeps the last four pictures, each with the time the
+screen was drawn. Measured on the MPC (2026-11-14): the screen thread draws
+about 60 pictures a second while a project plays, and a JPEG of a playing
+project is up to about 340 kB at 1920 × 1440 (a still settings page 55 kB
+at 1280 × 720).
+
+**The steady buffer.** The streaming thread ticks at the stream's rate and
+at every tick sends the newest picture drawn at least two frames before
+(33 ms at 60 fps, 67 at 30), so the pictures go out evenly spaced in the
+screen's own time however unevenly the screen thread drew them or the
+maker made them, and a picture that costs more than a frame to make never
+holds a tick up; with nothing new the last picture goes again. The cost is
+those two frames of delay and four kept pictures. `status` and the service
+log (every five seconds while streaming: pictures sent and made, what
+making one took, ticks with no buffer back, buffers the kernel marked bad,
+the longest gap) say how it goes.
 
 **USB bandwidth.** USB 2.0 keeps 6000 bytes of each 125 µs microframe for
-isochronous and interrupt endpoints. The 18-channel audio to the computer
-takes 504 bytes at 48 kHz (936 at 96 kHz), the computer's stereo to the MPC
-56 (104), its feedback 4; the webcam takes 1024 bytes, or 3072 for
-640 × 480 YUYV (`MirrorFormat::packet_bytes()`): about 4100 of the 6000 at
-96 kHz. The computer reserves these when a stream starts, so a webcam that
-did not fit would fail to start rather than take from the audio; bulk
-traffic (the network, the card) shares what is left. Uncompressed above
-640 × 480 is beyond one endpoint (960 × 720 YUYV would need 41 MB/s; three
-packets a microframe carry 24.6 MB/s), so those sizes are JPEG.
+isochronous and interrupt endpoints, booked when a stream starts. The
+18-channel audio to the computer takes 504 bytes at 48 kHz (936 at
+96 kHz), the computer's stereo to the MPC 56 (104), its feedback 4; the
+webcam books 1024 bytes for 320 × 240 YUYV at 30 fps, 2048 at 60, and 3072
+(the most one endpoint carries, 24.6 MB/s) for 640 × 480 YUYV and every
+JPEG (`MirrorFormat::packet_bytes()`): about 4100 of the 6000 at 96 kHz. A
+webcam that did not fit would fail to start rather than take from the
+audio, and microframes it leaves empty go to the bulk traffic (the network,
+the card). With one packet a microframe (8.2 MB/s), JPEG of a playing
+project at 1920 × 1440 (340 kB) reached only 23 fps; with three it holds
+30. Uncompressed above that is beyond one endpoint (640 × 480 YUYV at
+60 fps would need 37 MB/s), so those are JPEG.
 
 **The webcam function.** The MPC's kernel has the gadget's UVC function
 switched off (`# CONFIG_USB_CONFIGFS_F_UVC is not set`), though V4L2 and
@@ -462,10 +483,10 @@ computer's requests (a stall, at once) while no process answers.
 
 The function is `uvc.screen` (`gadget_add_mirror()`,
 [src/drivers/usb_gadget.h](../src/drivers/usb_gadget.h)): one format and one
-frame, the size asked for, 333333 × 100 ns intervals; no interrupt endpoint;
-an isochronous streaming endpoint of 1024-byte packets, one a microframe
-(8 MB/s) or three for 640 × 480 YUYV (24.6 MB/s, which the controller's
-3104-byte FIFO holds: 3 × (1024 + 8) + 8). It is linked after the UAC2 function and before
+frame, the size and rate asked for (333333 or 166666 × 100 ns); no
+interrupt endpoint; an isochronous streaming endpoint of 1024-byte packets,
+one to three a microframe (up to 24.6 MB/s, which the controller's 3104-byte
+FIFO holds: 3 × (1024 + 8) + 8). It is linked after the UAC2 function and before
 USB networking: the interfaces are audio (0–2), webcam (3–4), MIDI, then
 NCM, and the endpoints IN 1–2 audio, 3 the webcam, 4 MIDI, 5–6 NCM, so
 NCM's notify endpoint keeps the 336-byte FIFO 6 (above). macOS knows the

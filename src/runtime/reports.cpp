@@ -13,7 +13,7 @@ std::string status_line(const Session& session, const App& app, const UsbAudioOu
              "held=%04x last_pad=%d velocity=%d last_midi=%06x peak=%.6f input_peak=%.6f capture_frames=%llu capture_active=%u "
              "xruns=%u capture_xruns=%u clocks=%u screen_presented=%llu screen_pushed=%llu screen_pixels=%llu screen_clips=%llu screen_push_us=%u "
              "screen_max_push_us=%u screen_full_push_us=%u screen_draw_us=%u headphones=%d line_out=%d push_exit=%u usb_output=%s card_share=%s "
-             "audio_rate=%u audio_periods=%u audio_latency_frames=%u audio_reopens=%u mirror=%s mirror_size=%ux%u%s mirror_frames=%llu mirror_held=%u",
+             "audio_rate=%u audio_periods=%u audio_latency_frames=%u audio_reopens=%u mirror=%s mirror_size=%ux%u%s mirror_fps=%u mirror_frames=%llu mirror_held=%u",
              static_cast<unsigned long long>(audio.frames.load()), static_cast<unsigned long long>(audio.sounding_blocks.load()),
              session.hardware_events.load(), session.external_events.load(), session.synthetic_events.load(), session.held.load(),
              session.last_pad.load() + 1, session.velocity.load(), session.last_midi.load(), double(audio.peak.load()),
@@ -27,7 +27,7 @@ std::string status_line(const Session& session, const App& app, const UsbAudioOu
              card_share_state_names[std::min<size_t>(session.card_share.load(), 3)],
              audio.rate.load(), audio.periods.load(), audio.periods.load() * audio_frames, audio.reopens.load(),
              mirror_state_name(MirrorState(session.mirror.state.load())), unsigned(session.mirror.width.load()), unsigned(session.mirror.height.load()),
-             session.mirror.mjpeg.load() ? "-mjpeg" : session.mirror.fallback.load() ? "-fallback" : "",
+             session.mirror.mjpeg.load() ? "-mjpeg" : session.mirror.fallback.load() ? "-fallback" : "", unsigned(session.mirror.fps.load()),
              static_cast<unsigned long long>(session.mirror.frames.load()), unsigned(session.mirror.held.load()));
     auto fields = app.status();
     return fields.empty() ? std::string(reply) : std::string(reply) + ' ' + fields;

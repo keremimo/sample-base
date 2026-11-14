@@ -358,7 +358,7 @@ bool storage_linked(const std::vector<Link>& links) {
 // The webcam function for one picture size, unlinked (kernel/uvc's
 // configfs: Documentation/usb/gadget-uvc.rst). No interrupt endpoint; the
 // streaming endpoint's packets are 1024 bytes, up to three a microframe
-// (MirrorFormat::packet_bytes()): 320 x 240 YUYV at 30 fps is 4.6 MB/s,
+// (MirrorFormat::packet_bytes()): 320 x 240 YUYV at 30 fps is 4.6 MB/s (60: 9.2),
 // 640 x 480 YUYV 18.4 MB/s, a 2560 x 1920 JPEG of the screen about 100 kB.
 // Three packets still fit the controller's 3104-byte FIFO (3 x (1024 + 8) + 8).
 bool make_mirror(const std::string& function, const MirrorFormat& format, std::string& error) {
@@ -366,7 +366,7 @@ bool make_mirror(const std::string& function, const MirrorFormat& format, std::s
     std::string kind = format.mjpeg ? "mjpeg" : "uncompressed", short_name = format.mjpeg ? "m" : "u";
     std::string control = function + "/control", streaming = function + "/streaming";
     std::string picture = streaming + "/" + kind + "/" + short_name, frame = picture + "/f";
-    std::string bits = std::to_string(uint64_t(frame_bytes) * 8 * 30);
+    std::string bits = std::to_string(uint64_t(frame_bytes) * 8 * format.fps), interval = std::to_string(format.interval());
     bool ok = make_dirs(function, error) && put(function + "/streaming_maxpacket", std::to_string(format.packet_bytes()) + "\n", error) &&
               put(function + "/streaming_interval", "1\n", error) && put(function + "/function_name", "MPC Sample Screen\n", error) &&
               make_dirs(control + "/header/h", error) && make_dirs(control + "/class/fs", error) && make_dirs(control + "/class/ss", error) &&
@@ -374,7 +374,7 @@ bool make_mirror(const std::string& function, const MirrorFormat& format, std::s
               put(frame + "/wHeight", std::to_string(format.height) + "\n", error) &&
               put(frame + "/dwMinBitRate", bits + "\n", error) && put(frame + "/dwMaxBitRate", bits + "\n", error) &&
               put(frame + "/dwMaxVideoFrameBufferSize", std::to_string(frame_bytes) + "\n", error) &&
-              put(frame + "/dwDefaultFrameInterval", "333333\n", error) && put(frame + "/dwFrameInterval", "333333\n", error) &&
+              put(frame + "/dwDefaultFrameInterval", interval + "\n", error) && put(frame + "/dwFrameInterval", interval + "\n", error) &&
               make_dirs(streaming + "/header/h", error);
     for (const char* speed : {"fs", "hs", "ss"}) ok = ok && make_dirs(streaming + "/class/" + speed, error);
     auto link = [&](const std::string& target, const std::string& path) {
@@ -389,11 +389,11 @@ bool make_mirror(const std::string& function, const MirrorFormat& format, std::s
 // What the function was made for, read back from its frame and endpoint (a function an older build made may have
 // another packet size).
 bool mirror_made_for(const std::string& function, const MirrorFormat& format) {
-    std::string frame = function + (format.mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height, packet;
+    std::string frame = function + (format.mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height, packet, interval;
     return read_line(frame + "/wWidth", width) && read_line(frame + "/wHeight", height) &&
-           read_line(function + "/streaming_maxpacket", packet) &&
+           read_line(function + "/streaming_maxpacket", packet) && read_line(frame + "/dwDefaultFrameInterval", interval) &&
            width == std::to_string(format.width) && height == std::to_string(format.height) &&
-           packet == std::to_string(format.packet_bytes());
+           packet == std::to_string(format.packet_bytes()) && interval == std::to_string(format.interval());
 }
 } // namespace
 
@@ -457,9 +457,11 @@ bool gadget_mirror_format(MirrorFormat& format, const std::string& root) {
     if (!first_gadget(root, gadget, config)) return false;
     std::string function = gadget + "/functions/" + mirror_function;
     for (bool mjpeg : {true, false}) {
-        std::string frame = function + (mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height;
+        std::string frame = function + (mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height, interval;
         if (read_line(frame + "/wWidth", width) && read_line(frame + "/wHeight", height)) {
-            format = {unsigned(std::strtoul(width.c_str(), nullptr, 10)), unsigned(std::strtoul(height.c_str(), nullptr, 10)), mjpeg};
+            unsigned every = read_line(frame + "/dwDefaultFrameInterval", interval) ? unsigned(std::strtoul(interval.c_str(), nullptr, 10)) : 0;
+            format = {unsigned(std::strtoul(width.c_str(), nullptr, 10)), unsigned(std::strtoul(height.c_str(), nullptr, 10)), mjpeg,
+                      every && every < 250000 ? 60u : 30u};
             return format.width && format.height;
         }
     }

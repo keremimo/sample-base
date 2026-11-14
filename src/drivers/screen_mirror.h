@@ -9,12 +9,13 @@ namespace juce { class Image; }
 
 // Screen Mirror: the screen as a USB webcam over USB-C, so a computer (or a
 // tablet that takes USB cameras) shows it in any camera app. The MPC offers
-// one picture size, the one asked for, always the screen scaled by a whole
-// number (drivers/mirror_frame.h): 320 x 240 (the screen itself) and
-// 640 x 480 as YUYV, every pixel exact; the larger sizes made JPEG by the
-// RK3566's encoder (drivers/jpeg_encoder.h), USB 2.0 having no room for them
-// uncompressed. 30 pictures a second, a picture made only when the screen
-// changed.
+// one picture size and rate, the ones asked for, always the screen scaled by
+// a whole number (drivers/mirror_frame.h), 30 or 60 pictures a second: as
+// YUYV, every pixel exact, when one endpoint carries it (320 x 240 at either
+// rate, 640 x 480 at 30), else made JPEG by the RK3566's encoder
+// (drivers/jpeg_encoder.h). A picture is made only when the screen changed,
+// and sent from a steady buffer (two frames behind the screen) so pictures
+// go out evenly spaced.
 //
 // Its own thread does the work: loads kernel/uvc's webcam function
 // (sample_base_uvc, from inside the binary) and, for JPEG, kernel/vepu's
@@ -35,8 +36,9 @@ namespace juce { class Image; }
 // stock app unless a computer was showing it.
 struct ScreenMirrorMode {
     bool on = false;
-    unsigned width = 1280, height = 720;
-    bool operator==(const ScreenMirrorMode& o) const { return on == o.on && width == o.width && height == o.height; }
+    unsigned width = 1280, height = 960;
+    unsigned fps = 30;
+    bool operator==(const ScreenMirrorMode& o) const { return on == o.on && width == o.width && height == o.height && fps == o.fps; }
     bool operator!=(const ScreenMirrorMode& o) const { return !(*this == o); }
 };
 
@@ -53,7 +55,7 @@ const char* mirror_state_name(MirrorState state);
 struct ScreenMirrorStatus {
     MirrorState state = MirrorState::Off;
     MirrorFormat format;    // what the computer is offered
-    bool fallback = false;  // a JPEG size was asked for and no encoder came up: 640 x 480 YUYV instead
+    bool fallback = false;  // a JPEG size was asked for and no encoder came up: the largest YUYV that fits instead
     bool held = false;      // the app asked for a change (off, another size) that waits: a computer shows the camera
     uint64_t frames = 0;    // pictures sent since start
     std::string error;
@@ -61,11 +63,12 @@ struct ScreenMirrorStatus {
 
 class ScreenMirror {
 public:
-    // The sizes offered (the app's setting picks one), each the screen times a whole number: 1, 2 (YUYV), 3 (with
-    // black at the sides), 4, 6, 8 (MJPEG).
-    static constexpr unsigned size_count = 6;
-    static constexpr unsigned widths[size_count] {320, 640, 1280, 1280, 1920, 2560}, heights[size_count] {240, 480, 720, 960, 1440, 1920};
-    static bool uncompressed(unsigned width) { return width <= 640; }
+    // The sizes offered (the app's setting picks one), each the screen times a whole number: 1, 2, 3 (with black
+    // at the sides), 4; and the rates. Larger sizes cost the encoder more than a frame at 60 fps.
+    static constexpr unsigned size_count = 4;
+    static constexpr unsigned widths[size_count] {320, 640, 1280, 1280}, heights[size_count] {240, 480, 720, 960};
+    static constexpr unsigned rate_count = 2;
+    static constexpr unsigned rates[rate_count] {30, 60};
 
     // `initial`: the app's mode at start, so that a restart keeps a webcam
     // already linked for it (no rebind) instead of taking it out first.

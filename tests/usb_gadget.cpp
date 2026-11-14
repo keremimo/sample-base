@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
         return readlink(link.c_str(), buffer, sizeof buffer - 1) > 0 && std::string(buffer) == to;
     };
     assert(!gadget_mirror_linked(root));
-    assert(gadget_add_mirror({1280, 720, true}, error, root) == MirrorLink::Linked);
+    assert(gadget_add_mirror({1280, 720, true, 30}, error, root) == MirrorLink::Linked);
     assert(gadget_mirror_linked(root) && linked() && slurp(gadget + "/UDC") == "fcc00000.usb\n");
     assert(points_at(config + "/uvc.screen", webcam));
     std::string frame = webcam + "/streaming/mjpeg/m/f";
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
     assert(slurp(frame + "/dwMaxVideoFrameBufferSize") == "921600\n" && slurp(frame + "/dwFrameInterval") == "333333\n");
     assert(slurp(frame + "/dwMaxBitRate") == "221184000\n" && slurp(webcam + "/streaming_maxpacket") == "3072\n");
     MirrorFormat found;
-    assert(gadget_mirror_format(found, root) && found == (MirrorFormat {1280, 720, true})); // what a restarted app takes over
+    assert(gadget_mirror_format(found, root) && found == (MirrorFormat {1280, 720, true, 30})); // what a restarted app takes over
     assert(gadget_mirror_made_for(found, root));
     put(webcam + "/streaming_maxpacket", "1024\n"); // as an older build made it: made anew, the frame kept
     assert(!gadget_mirror_made_for(found, root) && gadget_add_mirror(found, error, root) == MirrorLink::Linked);
@@ -141,17 +141,25 @@ int main(int argc, char** argv) {
     for (auto speed : {"fs", "hs", "ss"}) assert(points_at(webcam + "/streaming/class/" + speed + "/h", webcam + "/streaming/header/h"));
     for (auto speed : {"fs", "ss"}) assert(points_at(webcam + "/control/class/" + speed + "/h", webcam + "/control/header/h"));
     put(webcam + "/kept", "1\n");
-    assert(gadget_add_mirror({1280, 720, true}, error, root) == MirrorLink::Linked && slurp(webcam + "/kept") == "1\n");
-    assert(gadget_add_mirror({320, 240, false}, error, root) == MirrorLink::Linked);
+    assert(gadget_add_mirror({1280, 720, true, 30}, error, root) == MirrorLink::Linked && slurp(webcam + "/kept") == "1\n");
+    assert(gadget_add_mirror({320, 240, false, 30}, error, root) == MirrorLink::Linked);
     assert(stat((webcam + "/kept").c_str(), &info) != 0 && stat((webcam + "/streaming/mjpeg/m").c_str(), &info) != 0);
     assert(slurp(webcam + "/streaming/uncompressed/u/f/wWidth") == "320\n");
     assert(slurp(webcam + "/streaming/uncompressed/u/f/dwMaxVideoFrameBufferSize") == "153600\n");
     assert(slurp(webcam + "/streaming_maxpacket") == "1024\n" && gadget_mirror_linked(root) && linked());
     // 640 x 480 YUYV needs 18.4 MB/s: three packets a microframe; a JPEG (a playing project: 340 kB) three too.
-    assert((MirrorFormat {640, 480, false}.packet_bytes() == 3072 && MirrorFormat {320, 240, false}.packet_bytes() == 1024));
-    assert((MirrorFormat {2560, 1920, true}.packet_bytes() == 3072 && MirrorFormat {2560, 1920, true}.frame_bytes() == 4915200));
-    assert(gadget_add_mirror({640, 480, false}, error, root) == MirrorLink::Linked && slurp(webcam + "/streaming_maxpacket") == "3072\n");
-    assert(gadget_add_mirror({320, 240, false}, error, root) == MirrorLink::Linked && slurp(webcam + "/streaming_maxpacket") == "1024\n");
+    assert((MirrorFormat {640, 480, false, 30}.packet_bytes() == 3072 && MirrorFormat {320, 240, false, 30}.packet_bytes() == 1024));
+    assert((MirrorFormat {2560, 1920, true, 30}.packet_bytes() == 3072 && MirrorFormat {2560, 1920, true, 30}.frame_bytes() == 4915200));
+    assert(gadget_add_mirror({640, 480, false, 30}, error, root) == MirrorLink::Linked && slurp(webcam + "/streaming_maxpacket") == "3072\n");
+    assert(gadget_add_mirror({320, 240, false, 30}, error, root) == MirrorLink::Linked && slurp(webcam + "/streaming_maxpacket") == "1024\n");
+    // 60 fps: half the interval, YUYV only where one endpoint carries it (320 x 240: 9.2 MB/s, two packets).
+    assert((MirrorFormat {320, 240, false, 60}.packet_bytes() == 2048 && MirrorFormat::fits_uncompressed(320, 240, 60)));
+    assert(!MirrorFormat::fits_uncompressed(640, 480, 60) && MirrorFormat::fits_uncompressed(640, 480, 30));
+    assert(gadget_add_mirror({320, 240, false, 60}, error, root) == MirrorLink::Linked);
+    assert(slurp(webcam + "/streaming/uncompressed/u/f/dwFrameInterval") == "166666\n" && slurp(webcam + "/streaming_maxpacket") == "2048\n");
+    assert(gadget_mirror_format(found, root) && found.fps == 60 && gadget_mirror_made_for(found, root));
+    assert(!gadget_mirror_made_for({320, 240, false, 30}, root));
+    assert(gadget_add_mirror({320, 240, false, 30}, error, root) == MirrorLink::Linked && slurp(webcam + "/streaming_maxpacket") == "1024\n");
 
     // The drive puts the webcam out (the controller has no FIFO for a seventh IN endpoint) and brings it back;
     // asked for meanwhile, the webcam waits.
@@ -161,7 +169,7 @@ int main(int argc, char** argv) {
     assert(gadget_add_storage("/dev/mmcblk1", order, error, root));
     assert(!gadget_mirror_linked(root) && stat(webcam.c_str(), &info) == 0 && linked());
     assert(std::find(order.begin(), order.end(), "uvc.screen") != order.end());
-    assert(gadget_add_mirror({320, 240, false}, error, root) == MirrorLink::CardShared && !gadget_mirror_linked(root));
+    assert(gadget_add_mirror({320, 240, false, 30}, error, root) == MirrorLink::CardShared && !gadget_mirror_linked(root));
     assert(gadget_eject_storage(false, error, root) == GadgetEject::Done);
     for (auto name : {"file", "removable", "ro", "forced_eject"}) unlink((lun + "/" + name).c_str());
     rmdir(lun.c_str());

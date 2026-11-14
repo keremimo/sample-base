@@ -73,7 +73,7 @@ GadgetEject gadget_eject_storage(bool force, std::string& error, const std::stri
 bool gadget_remove_storage(const std::vector<std::string>& order, std::string& error, const std::string& root = gadget_root);
 
 // Screen Mirror's USB webcam (drivers/screen_mirror.h): kernel/uvc's "uvc"
-// function offering one picture size at 30 fps, YUYV or MJPEG. It is linked
+// function offering one picture size at 30 or 60 fps, YUYV or MJPEG. It is linked
 // after the UAC2 function (the audio interfaces keep their numbers, by which
 // macOS knows the device) and before the network function, which stays last
 // (the controller's sixth transmit FIFO fits only its notify endpoint). A
@@ -85,18 +85,28 @@ constexpr const char* mirror_function = "uvc.screen";
 struct MirrorFormat {
     unsigned width = 320, height = 240;
     bool mjpeg = false; // else YUYV
-    bool operator==(const MirrorFormat& other) const { return width == other.width && height == other.height && mjpeg == other.mjpeg; }
+    unsigned fps = 30;  // 30 or 60
+    bool operator==(const MirrorFormat& other) const {
+        return width == other.width && height == other.height && mjpeg == other.mjpeg && fps == other.fps;
+    }
     bool operator!=(const MirrorFormat& other) const { return !(*this == other); }
     // A picture's bytes at most: YUYV's two a pixel, a JPEG's one (the screen's JPEGs are far smaller).
     unsigned frame_bytes() const { return mjpeg ? width * height : width * height * 2; }
-    // The streaming endpoint's bytes a microframe (125 us): one 1024-byte packet (8 MB/s), or two or three for
-    // a YUYV picture that needs more at 30 fps (640 x 480: 2304 bytes, so 3072, 24.6 MB/s). A JPEG of a playing
-    // project is about 340 kB at 1920 x 1440 (10 MB/s at 30 fps; one packet held it to 24 fps): JPEG gets three.
-    // USB 2.0 keeps 6000 bytes a microframe for these; the 18-channel audio takes about 1040 at 96 kHz.
+    // A picture's time in UVC's 100 ns units: 333333 at 30 fps, 166666 at 60.
+    unsigned interval() const { return 10000000u / (fps ? fps : 30); }
+    // The streaming endpoint's bytes a microframe (125 us): one 1024-byte packet (8 MB/s), or two or three
+    // (24.6 MB/s, the most one endpoint carries) for a YUYV picture that needs more (640 x 480 at 30 fps: 2304
+    // bytes, so 3072). A JPEG of a playing project is about 340 kB at 1920 x 1440 (10 MB/s at 30 fps; one packet
+    // held it to 24 fps): JPEG gets three. USB 2.0 keeps 6000 bytes a microframe for these; the 18-channel audio
+    // takes about 1040 at 96 kHz.
     unsigned packet_bytes() const {
         if (mjpeg) return 3072;
-        unsigned need = unsigned(uint64_t(frame_bytes()) * 30 / 8000) + 16; // + the payload headers
+        unsigned need = unsigned(uint64_t(frame_bytes()) * fps / 8000) + 16; // + the payload headers
         return need <= 1024 ? 1024 : need <= 2048 ? 2048 : 3072;
+    }
+    // Whether YUYV at this size and rate fits one endpoint (else it is sent as JPEG).
+    static bool fits_uncompressed(unsigned width, unsigned height, unsigned fps) {
+        return uint64_t(width) * height * 2 * fps / 8000 + 16 <= 3072;
     }
 };
 enum class MirrorLink { Linked, CardShared, Failed };
