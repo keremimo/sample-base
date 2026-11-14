@@ -33,7 +33,7 @@ void record_mirror(Session::Mirror& out, const ScreenMirrorStatus& status) {
     out.state.store(uint8_t(status.state));
     out.width.store(uint16_t(status.format.width)); out.height.store(uint16_t(status.format.height)); out.fps.store(uint16_t(status.format.fps));
     out.mjpeg.store(status.format.mjpeg); out.fallback.store(status.fallback); out.held.store(status.held);
-    out.frames.store(status.frames);
+    out.frames.store(status.frames); out.late.store(status.late); out.bad.store(status.bad);
 }
 
 void record_screen(ScreenStats& screen, const Display::Stats& stats, std::chrono::steady_clock::duration draw) {

@@ -100,8 +100,6 @@ struct ScreenMirror::Worker {
     std::mutex pictures_lock;
     std::array<Picture, kept> pictures;
     unsigned next_picture = 0;
-    std::atomic<unsigned> made_count {0}, made_max_us {0};
-    std::atomic<uint64_t> made_us {0};
     std::thread thread;
 
     explicit Worker(const ScreenMirrorMode& initial) : wanted(initial) {
@@ -112,7 +110,7 @@ struct ScreenMirror::Worker {
 
     void set_state(MirrorState state, const std::string& error = {}) {
         std::lock_guard<std::mutex> guard(status_lock);
-        if (state != shown.state || error != shown.error) {
+        if (state == MirrorState::Failed && error != shown.error) { // only what went wrong reaches the service log
             std::cout << "Screen mirror: " << mirror_state_name(state);
             if (state != MirrorState::Off) std::cout << ' ' << format.width << 'x' << format.height << ' ' << format.fps << " fps" << (format.mjpeg ? " MJPEG" : " YUYV");
             if (!error.empty()) std::cout << " (" << error << ')';
@@ -122,9 +120,9 @@ struct ScreenMirror::Worker {
     }
     MirrorState state() const { std::lock_guard<std::mutex> guard(status_lock); return shown.state; }
     void count_frame() { std::lock_guard<std::mutex> guard(status_lock); ++shown.frames; }
+    void count(uint64_t ScreenMirrorStatus::*counter) { std::lock_guard<std::mutex> guard(status_lock); ++(shown.*counter); }
     void set_held(bool held) {
         std::lock_guard<std::mutex> guard(status_lock);
-        if (held && !shown.held) std::cout << "Screen mirror: a computer shows the camera; the change waits until it closes it" << std::endl;
         shown.held = held;
     }
 
@@ -364,13 +362,11 @@ struct ScreenMirror::Worker {
         // STREAMON also finishes the computer's request to start (kernel/uvc held its status for this).
         if (xioctl(fd, VIDIOC_STREAMON, &type) < 0) { set_state(MirrorState::Failed, std::string("webcam start: ") + std::strerror(errno)); return; }
         streaming = true;
-        window = Window {};
         mark_live(true);
         set_state(MirrorState::Streaming);
     }
 
     void stream_off() {
-        report(true);
         stop_maker();
         int type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         xioctl(fd, VIDIOC_STREAMOFF, &type); // also answers the computer's request to stop
@@ -384,40 +380,6 @@ struct ScreenMirror::Worker {
     }
 
     // ---- Pictures ----
-
-    // How the stream went, in the service log when a stream ends and for any five seconds that went wrong (ticks
-    // late or missed, buffers bad, fewer pictures than the rate): pictures sent and made (the screen changed),
-    // what making one took, timer ticks with no buffer back from the computer yet or missed while this thread was
-    // busy, buffers the kernel gave back marked bad (dropped on the way), and the longest wait between two
-    // buffers coming back.
-    struct Window {
-        Clock::time_point start = Clock::now(), last_back;
-        unsigned sent = 0, made = 0, late = 0, missed = 0, bad = 0;
-        double make_ms = 0, make_max_ms = 0, gap_max_ms = 0;
-        size_t bytes = 0;
-    } window;
-
-    void report(bool force = false) {
-        auto now = Clock::now();
-        double seconds = std::chrono::duration<double>(now - window.start).count();
-        if (!force && seconds < 5) return;
-        // The maker's pictures: from the screen to the picture, a JPEG's wait in the encoder's queue included.
-        window.made = made_count.exchange(0);
-        window.make_ms = made_us.exchange(0) / 1000.0;
-        window.make_max_ms = made_max_us.exchange(0) / 1000.0;
-        bool trouble = window.late || window.missed || window.bad || window.sent + 1 < unsigned(seconds * format.fps * 0.98);
-        if ((force || trouble) && (window.sent || window.late || window.missed)) {
-            char line[320];
-            std::snprintf(line, sizeof line, "Screen mirror: %.1f s %ux%u %u fps: %u sent (%.1f fps), %u made (%.1f ms, max %.1f), "
-                          "%u late, %u missed ticks, %u bad, longest gap %.0f ms, %zu kB a picture",
-                          seconds, format.width, format.height, format.fps, window.sent, window.sent / std::max(seconds, 0.001), window.made,
-                          window.made ? window.make_ms / window.made : 0.0, window.make_max_ms, window.late, window.missed, window.bad,
-                          window.gap_max_ms, window.sent ? window.bytes / window.sent / 1024 : 0);
-            std::cout << line << std::endl;
-        }
-        window = Window {};
-        window.last_back = now;
-    }
 
     bool has_picture() {
         std::lock_guard<std::mutex> guard(pictures_lock);
@@ -448,7 +410,7 @@ struct ScreenMirror::Worker {
         v4l2_buffer buffer {};
         buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP; buffer.index = n;
         buffer.bytesused = unsigned(size);
-        if (xioctl(fd, VIDIOC_QBUF, &buffer) == 0) { count_frame(); ++window.sent; window.bytes += size; }
+        if (xioctl(fd, VIDIOC_QBUF, &buffer) == 0) count_frame();
     }
 
     // ---- The maker ----
@@ -471,17 +433,12 @@ struct ScreenMirror::Worker {
         maker.join();
     }
 
-    void keep(Clock::time_point drawn, const uint8_t* data, size_t size, Clock::time_point started) {
-        {
-            std::lock_guard<std::mutex> guard(pictures_lock);
-            auto& picture = pictures[next_picture];
-            picture.drawn = drawn;
-            picture.data.assign(data, data + std::min<size_t>(size, frame_bytes(format)));
-            next_picture = (next_picture + 1) % kept;
-        }
-        auto us = unsigned(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count());
-        made_count.fetch_add(1); made_us.fetch_add(us);
-        if (us > made_max_us.load()) made_max_us.store(us);
+    void keep(Clock::time_point drawn, const uint8_t* data, size_t size) {
+        std::lock_guard<std::mutex> guard(pictures_lock);
+        auto& picture = pictures[next_picture];
+        picture.drawn = drawn;
+        picture.data.assign(data, data + std::min<size_t>(size, frame_bytes(format)));
+        next_picture = (next_picture + 1) % kept;
     }
 
     // The maker's thread: whenever the screen changed (at most once a frame of the stream: a 60 fps screen feeds a
@@ -495,7 +452,7 @@ struct ScreenMirror::Worker {
         Clock::time_point last_drawn {};
         const auto spacing = std::chrono::nanoseconds(uint64_t(format.interval()) * 100 * 3 / 4);
         bool busy[JpegEncoder::slots] {};
-        Clock::time_point drawn_at[JpegEncoder::slots] {}, started[JpegEncoder::slots] {};
+        Clock::time_point drawn_at[JpegEncoder::slots] {};
         unsigned in_flight = 0;
         std::string error, said;
         auto complain = [&](const std::string& what) { if (what != said) std::cout << "Screen mirror: " << what << std::endl; said = what; };
@@ -517,15 +474,14 @@ struct ScreenMirror::Worker {
             if (!making.load()) break;
             if (fresh) {
                 last_drawn = drawn;
-                auto now = Clock::now();
                 if (!format.mjpeg) {
                     yuyv.resize(frame_bytes(format));
                     mirror_frame::to_yuyv(picture.data(), format.width, format.height, yuyv.data(), size_t(format.width) * 2);
-                    keep(drawn, yuyv.data(), yuyv.size(), now);
+                    keep(drawn, yuyv.data(), yuyv.size());
                     continue;
                 }
                 unsigned slot = busy[0] ? 1 : 0;
-                started[slot] = now; drawn_at[slot] = drawn;
+                drawn_at[slot] = drawn;
                 mirror_frame::to_yuyv(picture.data(), format.width, format.height, encoder.input(slot), encoder.stride());
                 if (encoder.submit(slot, error)) { busy[slot] = true; ++in_flight; }
                 else complain(error);
@@ -537,7 +493,7 @@ struct ScreenMirror::Worker {
             size_t size = 0;
             auto result = encoder.collect(slot, data, size, in_flight == JpegEncoder::slots ? 1000 : 2, error);
             if (result == JpegEncoder::Collect::Pending) continue;
-            if (result == JpegEncoder::Collect::Done) keep(drawn_at[slot], data, size, started[slot]);
+            if (result == JpegEncoder::Collect::Done) keep(drawn_at[slot], data, size);
             else complain(error);
             busy[slot] = false; --in_flight;
         }
@@ -548,11 +504,7 @@ struct ScreenMirror::Worker {
         buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; buffer.memory = V4L2_MEMORY_MMAP;
         while (xioctl(fd, VIDIOC_DQBUF, &buffer) == 0) {
             idle.push_back(buffer.index);
-            auto now = Clock::now();
-            if (buffer.flags & V4L2_BUF_FLAG_ERROR) ++window.bad; // a request missed its microframe: the computer drops it
-            if (window.last_back != Clock::time_point {})
-                window.gap_max_ms = std::max(window.gap_max_ms, std::chrono::duration<double, std::milli>(now - window.last_back).count());
-            window.last_back = now;
+            if (buffer.flags & V4L2_BUF_FLAG_ERROR) count(&ScreenMirrorStatus::bad); // a request missed its microframe: dropped
         }
     }
 
@@ -587,10 +539,9 @@ struct ScreenMirror::Worker {
                 uint64_t ticks = 0;
                 if (read(timer, &ticks, sizeof ticks) < 0) ticks = 0;
                 if (fd >= 0 && streaming) {
-                    if (ticks > 1) window.missed += unsigned(ticks - 1); // this thread was busy past a tick
-                    if (idle.empty()) ++window.late;                      // every buffer still with the computer
+                    for (uint64_t n = 1; n < ticks; ++n) count(&ScreenMirrorStatus::late); // this thread busy past a tick
+                    if (idle.empty()) count(&ScreenMirrorStatus::late);                     // every buffer still with the computer
                     else { unsigned n = idle.back(); idle.pop_back(); send(n); }
-                    report();
                 }
             }
         }

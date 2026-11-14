@@ -65,7 +65,7 @@ struct Session {
         std::atomic<uint8_t> state {0};
         std::atomic<uint16_t> width {0}, height {0}, fps {0};
         std::atomic<bool> mjpeg {false}, fallback {false}, held {false};
-        std::atomic<uint64_t> frames {0};
+        std::atomic<uint64_t> frames {0}, late {0}, bad {0}; // late: ticks with no picture sent; bad: pictures dropped
     } mirror;
     std::mutex prompt_lock;
     std::string prompt;

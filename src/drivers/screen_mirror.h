@@ -58,6 +58,8 @@ struct ScreenMirrorStatus {
     bool fallback = false;  // a JPEG size was asked for and no encoder came up: the largest YUYV that fits instead
     bool held = false;      // the app asked for a change (off, another size) that waits: a computer shows the camera
     uint64_t frames = 0;    // pictures sent since start
+    uint64_t late = 0;      // ticks with no picture sent: every buffer still with the computer, or this thread busy
+    uint64_t bad = 0;       // pictures the kernel marked bad (a request missed its microframe; the computer drops them)
     std::string error;
 };
 
