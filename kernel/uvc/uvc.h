@@ -167,6 +167,13 @@ struct uvc_device {
 	/* Events */
 	unsigned int event_length;
 	unsigned int event_setup_out : 1;
+
+	/*
+	 * sample-base: set_alt() left the computer's request waiting for the
+	 * process (USB_GADGET_DELAYED_STATUS); uvc_function_setup_continue()
+	 * answers only then.
+	 */
+	bool delayed_status;
 };
 
 static inline struct uvc_device *to_uvc(struct usb_function *f)

@@ -496,13 +496,34 @@ boot. When no encoder comes up, a JPEG size falls back to 640 × 480 YUYV
 (`mirror_size=640x480-fallback` in `status`).
 
 Turning Screen Mirror on or off, or another size, rebinds the gadget like a
-rate change (about a second without USB). When the app stops, the webcam
-stays in the gadget and refuses the computer, so a restart with the same
-size does not rebind; turning it off unlinks it and unloads its module, and
-`install/restore-stock.sh` takes it out for the stock app. `status` reports
-`mirror=` (`off`, `starting`, `waiting`, `streaming`, `card-shared`,
-`failed`), `mirror_size=` and `mirror_frames=`; the service log has a
+rate change (about a second without USB). `status` reports `mirror=`
+(`off`, `starting`, `waiting`, `streaming`, `card-shared`, `failed`),
+`mirror_size=`, `mirror_frames=` and `mirror_held=`; the service log has a
 `Screen mirror:` line for each change. Checked with QuickTime on a Mac.
+
+**Never under a computer showing it.** Unplugging the camera while an app
+shows it made QuickTime report an error and close its window, and OBS
+crash (2026-11-14). So nothing takes the webcam out of the gadget while a
+computer streams it: `/run/sample-base-mirror-live` is there from the
+computer's STREAMON to its STREAMOFF (or its going), and while it is
+
+- turning Screen Mirror off or another size waits (`mirror_held=1`) and
+  happens once the computer stops the stream (the app closes the camera);
+- `CardShare::lend()` refuses with "the camera is in use on the computer"
+  before anything is unmounted (`gadget_add_storage()` refuses too);
+- the USB-C audio rate does not follow the device (`follow_usb_rate()`);
+  USB-C audio converts meanwhile and the rate follows after;
+- `install/restore-stock.sh` leaves the webcam in the gadget (until a
+  reboot, or the next app turns it off).
+
+When the app stops mid-stream (a restart, a crash), the webcam stays: the
+computer's picture stands still, and when the app runs again kernel/uvc
+gives the new process a STREAMON of its own (`uvc_v4l2_subscribe_event()`),
+so it sends again without the computer asking; that STREAMON answers no
+request of the computer's (`delayed_status`, so composite has nothing to
+warn about), and a process that leaves while the computer waits on it
+answers first. A webcam an earlier run left is taken as it is
+(`gadget_mirror_format()`), so a restart with the same size never rebinds.
 
 ## Jack detection
 

@@ -71,6 +71,8 @@ std::string CardShare::read(const std::string& path) const {
 
 bool CardShare::lend() {
     if (current.state != CardShareState::Home) { current.message = "the card is not the MPC's now"; return false; }
+    // The drive needs the webcam's endpoint (gadget_add_storage()): never under a computer showing the camera.
+    if (gadget_mirror_live()) { current.message = mirror_in_use; return false; }
     auto card = find_card(services.volumes());
     if (card.disk.empty()) { current.message = "no card"; return false; }
     current.disk = card.disk;

@@ -46,11 +46,14 @@ if [ -n "$DISK" ] && [ -b "/dev/$DISK" ]; then
 fi
 rm -f "$CARD_SAVED"
 # Screen Mirror's webcam (src/drivers/screen_mirror.h) stays in the gadget
-# while an app restarts: the stock app gets the gadget without it. Its links
-# go first, then its folders deepest first (configfs keeps the ones it made
-# itself until the function's own rmdir), then its module.
+# while an app restarts: the stock app gets the gadget without it, unless a
+# computer was showing it (/run/sample-base-mirror-live): its app may not
+# survive the camera unplugged under it, so the webcam stays until a reboot.
+# Its links go first, then its folders deepest first (configfs keeps the ones
+# it made itself until the function's own rmdir), then its module.
 for MIRROR in /sys/kernel/config/usb_gadget/*/functions/uvc.screen; do
     [ -d "$MIRROR" ] || continue
+    [ -e /run/sample-base-mirror-live ] && continue
     GADGET=${MIRROR%/functions/*}
     UDC=$(cat "$GADGET/UDC" 2>/dev/null || true)
     { [ -z "$UDC" ] || echo > "$GADGET/UDC"; } 2>/dev/null || true

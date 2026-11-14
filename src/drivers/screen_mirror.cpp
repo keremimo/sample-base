@@ -70,8 +70,8 @@ struct ScreenMirror::Worker {
     ScreenMirrorStatus shown;
 
     // The worker thread's own.
-    bool first = true;
-    ScreenMirrorMode applied;
+    ScreenMirrorMode applied;        // what the gadget has now (on: the webcam linked for that size)
+    Clock::time_point settle_until;  // a webcam an earlier run left: no change until a stream it had could resume
     MirrorFormat format;
     bool fallback = false;
     int fd = -1, timer = -1;
@@ -107,6 +107,19 @@ struct ScreenMirror::Worker {
     }
     MirrorState state() const { std::lock_guard<std::mutex> guard(status_lock); return shown.state; }
     void count_frame() { std::lock_guard<std::mutex> guard(status_lock); ++shown.frames; }
+    void set_held(bool held) {
+        std::lock_guard<std::mutex> guard(status_lock);
+        if (held && !shown.held) std::cout << "Screen mirror: a computer shows the camera; the change waits until it closes it" << std::endl;
+        shown.held = held;
+    }
+
+    // A computer is showing the camera: the marker tells the gadget's other users (the card's lending, the USB
+    // rate) and install/restore-stock.sh to leave the webcam in place (gadget_mirror_live()).
+    void mark_live(bool live) {
+        if (!live) { unlink(mirror_live_marker); return; }
+        int marker = open(mirror_live_marker, O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+        if (marker >= 0) close(marker);
+    }
 
     // ---- Modules, encoder and gadget ----
 
@@ -150,6 +163,19 @@ struct ScreenMirror::Worker {
         link();
     }
 
+    // At start: a webcam an earlier run left in the gadget (Melodee restarted) is taken as it is, for its size, so a
+    // computer showing it keeps it (kernel/uvc tells the new process the stream goes on); changes wait as below.
+    void adopt() {
+        MirrorFormat linked;
+        if (!gadget_mirror_format(linked)) { applied = {}; set_state(MirrorState::Off); return; }
+        format = linked; fallback = false;
+        applied = {true, linked.width, linked.height};
+        std::string error;
+        if (format.mjpeg) start_encoder(error);
+        settle_until = Clock::now() + std::chrono::milliseconds(1500);
+        set_state(gadget_mirror_linked() ? MirrorState::Waiting : MirrorState::CardShared);
+    }
+
     void link() {
         std::string error;
         switch (gadget_add_mirror(format, error)) {
@@ -186,6 +212,10 @@ struct ScreenMirror::Worker {
         set_format();
         probe = commit = defaults();
         set_state(MirrorState::Waiting);
+        // A stream the computer kept through a restart comes as a STREAMON at once (kernel/uvc); without one the
+        // marker an earlier run left is stale.
+        events();
+        if (fd >= 0 && !streaming) mark_live(false);
         return true;
     }
 
@@ -200,7 +230,8 @@ struct ScreenMirror::Worker {
         xioctl(fd, VIDIOC_S_FMT, &f);
     }
 
-    // The device closed without STREAMOFF: kernel/uvc stops a computer still streaming by itself.
+    // The device closed without STREAMOFF. A computer still streaming keeps the camera and sees its picture stand
+    // still; the next process opening the device sends again (kernel/uvc), or the computer stops by itself.
     void close_device() {
         unmap();
         if (fd >= 0) close(fd);
@@ -277,15 +308,17 @@ struct ScreenMirror::Worker {
                 // STREAMOFF: with no request of the computer's waiting it only trips usb_composite_setup_continue's
                 // warning. Closing frees the buffers; the device opens again within a second.
                 close_device();
+                mark_live(false);
                 set_state(MirrorState::Waiting);
                 return;
             default: break;
             }
         }
-        if (fd >= 0 && errno == ENODEV) { close_device(); set_state(MirrorState::Waiting); } // the gadget rebound (card lent, a rate)
+        if (fd >= 0 && errno == ENODEV) { close_device(); mark_live(false); set_state(MirrorState::Waiting); } // the gadget rebound
     }
 
     void stream_on() {
+        if (format.mjpeg && !encoder.ready()) { std::string error; start_encoder(error); } // a stream resumed after a restart
         set_format();
         v4l2_requestbuffers request {};
         request.count = buffer_count; request.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; request.memory = V4L2_MEMORY_MMAP;
@@ -304,12 +337,14 @@ struct ScreenMirror::Worker {
         // STREAMON also finishes the computer's request to start (kernel/uvc held its status for this).
         if (xioctl(fd, VIDIOC_STREAMON, &type) < 0) { set_state(MirrorState::Failed, std::string("webcam start: ") + std::strerror(errno)); return; }
         streaming = true;
+        mark_live(true);
         set_state(MirrorState::Streaming);
     }
 
     void stream_off() {
         int type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         xioctl(fd, VIDIOC_STREAMOFF, &type); // also answers the computer's request to stop
+        mark_live(false);
         unmap();
         v4l2_requestbuffers none {};
         none.count = 0; none.type = V4L2_BUF_TYPE_VIDEO_OUTPUT; none.memory = V4L2_MEMORY_MMAP;
@@ -363,11 +398,18 @@ struct ScreenMirror::Worker {
         timer = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
         itimerspec every {{0, long(interval_100ns) * 100}, {0, long(interval_100ns) * 100}};
         timerfd_settime(timer, 0, &every, nullptr);
+        adopt();
         while (running.load()) {
             ScreenMirrorMode mode;
             { std::lock_guard<std::mutex> guard(lock); mode = wanted; }
-            if (first || mode != applied) { first = false; applied = mode; apply(mode); retry = Clock::now() + std::chrono::seconds(1); }
             auto now = Clock::now();
+            // Never unplug the camera under a computer showing it (its app may not survive that): turning it off or
+            // another size waits until the computer stops the stream.
+            if (mode != applied && now >= settle_until) {
+                if (streaming) set_held(true);
+                else { set_held(false); applied = mode; apply(mode); retry = Clock::now() + std::chrono::seconds(1); }
+            } else if (mode == applied) set_held(false);
+            now = Clock::now();
             // Not open: the webcam was just linked, or the gadget rebound (the card lent and back, a rate change).
             if (applied.on && fd < 0 && now >= retry && state() != MirrorState::Failed) {
                 retry = now + std::chrono::seconds(1);
@@ -377,7 +419,7 @@ struct ScreenMirror::Worker {
             pollfd waits[2] {{fd, short(POLLPRI | (streaming && idle.size() < buffers ? POLLOUT : 0)), 0}, {timer, POLLIN, 0}};
             if (poll(waits, 2, 200) < 0) continue;
             if (fd >= 0 && (waits[0].revents & POLLPRI)) events();
-            if (fd >= 0 && (waits[0].revents & POLLHUP)) { close_device(); set_state(MirrorState::Waiting); continue; }
+            if (fd >= 0 && (waits[0].revents & POLLHUP)) { close_device(); mark_live(false); set_state(MirrorState::Waiting); continue; }
             if (fd >= 0 && streaming && (waits[0].revents & POLLOUT)) returned();
             if (waits[1].revents & POLLIN) {
                 uint64_t ticks = 0;

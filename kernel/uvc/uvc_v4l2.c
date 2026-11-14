@@ -523,6 +523,19 @@ uvc_v4l2_subscribe_event(struct v4l2_fh *fh,
 		uvc->func_connected = true;
 		handle->is_uvc_app_handle = true;
 		uvc_function_connect(uvc);
+		/*
+		 * sample-base: the computer kept streaming while no process ran
+		 * (the app restarted): the new one hears STREAMON and sends again,
+		 * so the computer's app sees a pause instead of losing the camera.
+		 * Its STREAMON answers no request (delayed_status is clear).
+		 */
+		if (uvc->state == UVC_STATE_STREAMING) {
+			struct v4l2_event v4l2_event;
+
+			memset(&v4l2_event, 0, sizeof(v4l2_event));
+			v4l2_event.type = UVC_EVENT_STREAMON;
+			v4l2_event_queue(&uvc->vdev, &v4l2_event);
+		}
 	}
 
 	return 0;
@@ -530,6 +543,13 @@ uvc_v4l2_subscribe_event(struct v4l2_fh *fh,
 
 static void uvc_v4l2_disable(struct uvc_device *uvc)
 {
+	/*
+	 * sample-base: a process that leaves while the computer waits on it
+	 * (between its STREAMON or STREAMOFF and the process's answer) answers
+	 * first, so the computer is not left waiting.
+	 */
+	if (uvc->delayed_status)
+		uvc_function_setup_continue(uvc, 0);
 	uvc_function_disconnect(uvc);
 	uvcg_video_disable(&uvc->video);
 	uvcg_free_buffers(&uvc->video.queue);

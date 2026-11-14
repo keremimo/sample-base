@@ -57,11 +57,13 @@ void Controller::follow_card(Session& session) {
 // Service thread: the USB-C audio gadget offers the computer the rate the
 // audio device runs at, so a DAW records and plays at it. Rewriting the rate
 // rebinds the gadget (USB audio, MIDI and SSH drop for about a second), so
-// never while the card is lent or on its way, and once a rate: a failed
-// change keeps the old rate, and USB-C audio converts as before.
+// never while the card is lent or on its way, nor while a computer shows
+// Screen Mirror's camera (it would be unplugged under the app; the rate
+// follows once the computer stops), and once a rate: a failed change keeps
+// the old rate, and USB-C audio converts as before.
 void Controller::follow_usb_rate(Session& session) {
     unsigned rate = session.audio.rate.load();
-    if (!usb_rate_follows || rate == usb_rate_tried || card.status().state != CardShareState::Home) return;
+    if (!usb_rate_follows || rate == usb_rate_tried || card.status().state != CardShareState::Home || gadget_mirror_live()) return;
     usb_rate_tried = rate;
     auto change = set_uac2_rate(rate);
     if (change.result == GadgetChange::Result::Changed || change.result == GadgetChange::Result::Failed)

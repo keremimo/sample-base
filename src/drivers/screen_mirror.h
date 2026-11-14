@@ -21,11 +21,18 @@ namespace juce { class Image; }
 // encoder switch (sample_base_vepu, never unloaded), links the webcam into
 // the USB gadget (gadget_add_mirror(); the gadget rebinds, so USB audio, MIDI
 // and SSH drop for about a second), answers the computer and sends the
-// pictures. Turning it off unlinks the webcam and unloads its module. The
-// webcam steps out while the card is lent over USB (gadget_add_storage())
-// and comes back after. When the app stops, the webcam stays in the gadget
-// and refuses the computer (kernel/uvc's change), so a restart does not
-// rebind; install/restore-stock.sh takes it out for the stock app.
+// pictures. Turning it off unlinks the webcam and unloads its module.
+//
+// The camera is never unplugged under a computer showing it (an app such as
+// OBS may not survive it): while one streams, turning it off or another size
+// waits until the computer stops (ScreenMirrorStatus::held), the card is not
+// lent (CardShare::lend() refuses: the webcam would have to step out) and the
+// USB-C audio rate does not follow the device (both rebind the gadget);
+// gadget_mirror_live() says so to them. When the app stops, the webcam stays
+// in the gadget, so a restart does not rebind: a computer streaming sees its
+// picture stand still and the new process sends again (kernel/uvc replays
+// STREAMON to it). install/restore-stock.sh takes the webcam out for the
+// stock app unless a computer was showing it.
 struct ScreenMirrorMode {
     bool on = false;
     unsigned width = 1280, height = 720;
@@ -47,6 +54,7 @@ struct ScreenMirrorStatus {
     MirrorState state = MirrorState::Off;
     MirrorFormat format;    // what the computer is offered
     bool fallback = false;  // a JPEG size was asked for and no encoder came up: 640 x 480 YUYV instead
+    bool held = false;      // the app asked for a change (off, another size) that waits: a computer shows the camera
     uint64_t frames = 0;    // pictures sent since start
     std::string error;
 };

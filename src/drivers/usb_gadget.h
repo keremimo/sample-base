@@ -98,6 +98,14 @@ struct MirrorFormat {
     }
 };
 enum class MirrorLink { Linked, CardShared, Failed };
+// Present while a computer streams the webcam (ScreenMirror writes it, and
+// leaves it when the app stops mid-stream: the computer still shows it).
+// What would rebind the gadget waits while it is there.
+constexpr const char* mirror_live_marker = "/run/sample-base-mirror-live";
+constexpr const char* mirror_in_use = "the camera is in use on the computer";
+bool gadget_mirror_live(const std::string& marker = mirror_live_marker);
+// The webcam function's picture size and kind when it exists, linked or not.
+bool gadget_mirror_format(MirrorFormat& format, const std::string& root = gadget_root);
 // Makes the function for `format` (one made for another size goes first) and
 // links it; the gadget rebinds unless it is linked for `format` already.
 // Needs kernel/uvc's module loaded. CardShared: the drive is linked, nothing

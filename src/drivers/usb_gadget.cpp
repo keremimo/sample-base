@@ -229,6 +229,8 @@ bool gadget_add_storage(const std::string& medium, std::vector<std::string>& ord
     if (!first_gadget(root, gadget, config)) { error = "no USB gadget"; return false; }
     if (!read_line(gadget + "/UDC", udc)) { error = gadget + "/UDC unreadable"; return false; }
     std::string function = gadget + "/functions/" + card_function, lun = function + "/lun.0";
+    // The webcam would have to step out under the computer showing it (CardShare::lend() asks first).
+    if (!exists(function) && gadget_mirror_live()) { error = mirror_in_use; return false; }
     // mkdir makes the function and its first LUN (removable, read-write, empty).
     if (mkdir(function.c_str(), 0755) != 0 && errno != EEXIST) { error = function + ": " + std::strerror(errno); return false; }
     auto links = function_links(gadget);
@@ -436,6 +438,23 @@ bool gadget_mirror_linked(const std::string& root) {
     std::string function = gadget + "/functions/" + mirror_function;
     auto links = function_links(gadget);
     return std::any_of(links.begin(), links.end(), [&](const Link& link) { return link.target == function; });
+}
+
+bool gadget_mirror_live(const std::string& marker) { return access(marker.c_str(), F_OK) == 0; }
+
+bool gadget_mirror_format(MirrorFormat& format, const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(relinking);
+    std::string gadget, config;
+    if (!first_gadget(root, gadget, config)) return false;
+    std::string function = gadget + "/functions/" + mirror_function;
+    for (bool mjpeg : {true, false}) {
+        std::string frame = function + (mjpeg ? "/streaming/mjpeg/m/f" : "/streaming/uncompressed/u/f"), width, height;
+        if (read_line(frame + "/wWidth", width) && read_line(frame + "/wHeight", height)) {
+            format = {unsigned(std::strtoul(width.c_str(), nullptr, 10)), unsigned(std::strtoul(height.c_str(), nullptr, 10)), mjpeg};
+            return format.width && format.height;
+        }
+    }
+    return false;
 }
 
 bool gadget_remove_mirror(std::string& error, const std::string& root) {

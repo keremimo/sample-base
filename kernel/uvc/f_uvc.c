@@ -274,6 +274,14 @@ void uvc_function_setup_continue(struct uvc_device *uvc, int disable_ep)
 	if (disable_ep && uvc->video.ep)
 		usb_ep_disable(uvc->video.ep);
 
+	/*
+	 * sample-base: only a request the computer is waiting on gets its
+	 * status: a STREAMON resuming a stream after the process restarted
+	 * (uvc_v4l2_subscribe_event()) has none, and composite warns.
+	 */
+	if (!uvc->delayed_status)
+		return;
+	uvc->delayed_status = false;
 	usb_composite_setup_continue(cdev);
 }
 
@@ -358,6 +366,7 @@ uvc_function_set_alt(struct usb_function *f, unsigned interface, unsigned alt)
 		v4l2_event.type = UVC_EVENT_STREAMOFF;
 		v4l2_event_queue(&uvc->vdev, &v4l2_event);
 
+		uvc->delayed_status = true; /* sample-base */
 		return USB_GADGET_DELAYED_STATUS;
 
 	case 1:
@@ -380,6 +389,7 @@ uvc_function_set_alt(struct usb_function *f, unsigned interface, unsigned alt)
 		memset(&v4l2_event, 0, sizeof(v4l2_event));
 		v4l2_event.type = UVC_EVENT_STREAMON;
 		v4l2_event_queue(&uvc->vdev, &v4l2_event);
+		uvc->delayed_status = true; /* sample-base */
 		return USB_GADGET_DELAYED_STATUS;
 
 	default:

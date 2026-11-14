@@ -131,6 +131,8 @@ int main(int argc, char** argv) {
     assert(slurp(frame + "/wWidth") == "1280\n" && slurp(frame + "/wHeight") == "720\n");
     assert(slurp(frame + "/dwMaxVideoFrameBufferSize") == "921600\n" && slurp(frame + "/dwFrameInterval") == "333333\n");
     assert(slurp(frame + "/dwMaxBitRate") == "221184000\n" && slurp(webcam + "/streaming_maxpacket") == "1024\n");
+    MirrorFormat found;
+    assert(gadget_mirror_format(found, root) && found == (MirrorFormat {1280, 720, true})); // what a restarted app takes over
     assert(points_at(webcam + "/streaming/header/h/m", webcam + "/streaming/mjpeg/m"));
     for (auto speed : {"fs", "hs", "ss"}) assert(points_at(webcam + "/streaming/class/" + speed + "/h", webcam + "/streaming/header/h"));
     for (auto speed : {"fs", "ss"}) assert(points_at(webcam + "/control/class/" + speed + "/h", webcam + "/control/header/h"));
@@ -167,4 +169,10 @@ int main(int argc, char** argv) {
     assert(!gadget_mirror_linked(root) && stat(webcam.c_str(), &info) != 0 && lstat((config + "/uvc.screen").c_str(), &info) != 0);
     assert(linked() && slurp(gadget + "/UDC") == "fcc00000.usb\n");
     assert(gadget_remove_mirror(error, root)); // None: nothing to do
+    assert(!gadget_mirror_format(found, root));
+    // A computer showing the camera: no drive (the webcam would step out under it).
+    std::string marker = std::string(argv[1]) + "/live";
+    assert(!gadget_mirror_live(marker));
+    put(marker, "");
+    assert(gadget_mirror_live(marker));
 }

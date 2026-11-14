@@ -289,7 +289,12 @@ class RecoveryScriptTests(unittest.TestCase):
             script = root / "restore.sh"
             script.write_text(source.replace("/bin/systemctl", shlex.quote(str(systemctl)))
                               .replace("/sys/kernel/config/usb_gadget", str(configfs)).replace("rmmod ", shlex.quote(str(rmmod)) + " ")
-                              .replace("/sys/bus/spi", str(root / "none")))
+                              .replace("/sys/bus/spi", str(root / "none")).replace("/run/sample-base-mirror-live", str(root / "live")))
+            # A computer showing the camera: it stays (its app may not survive it unplugged).
+            (root / "live").write_text("")
+            subprocess.run(["sh", str(script)], check=True, env={**os.environ, "FIXTURE_ROOT": temp})
+            self.assertTrue((config / "uvc.screen").is_symlink() and (webcam / "streaming/header/h/m").is_symlink())
+            (root / "live").unlink()
             subprocess.run(["sh", str(script)], check=True, env={**os.environ, "FIXTURE_ROOT": temp})
             self.assertFalse(os.path.lexists(config / "uvc.screen"))
             self.assertTrue((config / "uac2.audio").is_symlink())
