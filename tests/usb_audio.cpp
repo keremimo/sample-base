@@ -6,6 +6,7 @@
 // stems. Then the input against a host clock running fast or slow: locked
 // through the gadget's feedback, trimmed without it, and unlocked when the
 // host ignores it. Last, the converter's flatness and alias rejection.
+#include <cerrno>
 #include "drivers/usb_audio.h"
 #include <alsa/asoundlib.h>
 #include <algorithm>
@@ -52,6 +53,8 @@ static unsigned out_room = 0; // Under pace_lock: frames the playback thread may
 static bool out_idle = false; // The playback thread is back waiting: all it wrote is counted
 
 extern "C" int __wrap_snd_card_next(int* card) { *card = *card < 0 && gadget ? 0 : -1; return 0; }
+// No control events on the fake card: the output thread falls back to its 250 ms checks.
+extern "C" int __wrap_snd_ctl_subscribe_events(snd_ctl_t*, int) { return -ENOSYS; }
 extern "C" int __wrap_snd_ctl_open(snd_ctl_t** ctl, const char* name, int) {
     std::string text = name;
     if (!gadget || (text != "hw:0" && text != "hw:CARD=UAC2Gadget")) return -ENOENT;

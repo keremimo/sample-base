@@ -3,6 +3,7 @@
 #include "drivers/direct_monitor.h"
 #include "drivers/platform.h"
 #include <alsa/asoundlib.h>
+#include <poll.h>
 #include <pthread.h>
 #include <algorithm>
 #include <cerrno>
@@ -19,7 +20,7 @@ using Clock = std::chrono::steady_clock;
 struct Stream {
     snd_pcm_t* pcm = nullptr;
     unsigned rate = 0, channels = 0, width = 0;
-    snd_pcm_uframes_t period = 0;
+    snd_pcm_uframes_t period = 0, buffer = 0;
 };
 
 // Opens one direction of the gadget, or any PCM, at the computer's rate, or
@@ -56,7 +57,7 @@ bool open_stream(const std::string& name, snd_pcm_stream_t direction, long host_
          (capture || snd_pcm_sw_params_set_start_threshold(stream.pcm, sw, buffer) >= 0) &&
          snd_pcm_sw_params(stream.pcm, sw) >= 0 && snd_pcm_prepare(stream.pcm) >= 0 && (!capture || snd_pcm_start(stream.pcm) >= 0);
     if (!ok || !period || rate < 8000 || rate > 384000) { snd_pcm_close(stream.pcm); stream.pcm = nullptr; return false; }
-    stream.rate = rate; stream.channels = channels; stream.period = period;
+    stream.rate = rate; stream.channels = channels; stream.period = period; stream.buffer = buffer;
     return true;
 }
 
@@ -349,6 +350,43 @@ void UsbAudioOutput::run(std::string requested) {
         if (playback.pcm) { snd_pcm_drop(playback.pcm); snd_pcm_close(playback.pcm); playback.pcm = nullptr; }
         stream_rate.store(0); stream_channels.store(0); stream_width.store(0); trim_ppm.store(0); lowest.store(0);
     };
+    // While no stream is open, the gadget's controls with their events on. f_uac2 sends the computer every packet
+    // at its first size until a stream here runs (u_audio.c): 5 frames at 44.1 kHz, which reads as 40 kHz, and a
+    // Mac or an iPhone times the stream it starts by those packets, then writes part of each of its buffers too
+    // late, as silence (issue 74). f_uac2 announces "Playback Rate" as the computer starts or stops streaming, so
+    // the stream opens and starts within milliseconds of that rather than at the next 250 ms check.
+    snd_ctl_t* events = nullptr;
+    std::string events_control;
+    auto watch = [&](const std::string& control) {
+        if (control == events_control) return;
+        if (events) { snd_ctl_close(events); events = nullptr; }
+        events_control = control;
+        if (!control.empty() && snd_ctl_open(&events, control.c_str(), SND_CTL_NONBLOCK) >= 0 && snd_ctl_subscribe_events(events, 1) < 0) {
+            snd_ctl_close(events); events = nullptr;
+        }
+    };
+    // Until `until`, or sooner when the gadget's rate changes; true when it did.
+    auto wait_for_rate = [&](Clock::time_point until) {
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(until - Clock::now()).count();
+        if (!events || ms <= 0) { std::this_thread::sleep_for(std::chrono::milliseconds(20)); return false; }
+        pollfd fds[4];
+        int count = snd_ctl_poll_descriptors(events, fds, 4), woken = count > 0 ? poll(fds, nfds_t(count), int(ms)) : -1;
+        if (woken < 0) std::this_thread::sleep_for(std::chrono::milliseconds(20)); // No descriptors: as without events
+        if (woken <= 0) return false;
+        unsigned short revents = 0;
+        snd_ctl_poll_descriptors_revents(events, fds, unsigned(count), &revents);
+        snd_ctl_event_t* event; snd_ctl_event_alloca(&event);
+        bool rate = false;
+        int got = 0;
+        while ((got = snd_ctl_read(events, event)) > 0)
+            if (snd_ctl_event_get_type(event) == SND_CTL_EVENT_ELEM && !strcmp(snd_ctl_event_elem_get_name(event), "Playback Rate")) rate = true;
+        if ((revents & (POLLERR | POLLHUP | POLLNVAL)) || (got < 0 && got != -EAGAIN)) {
+            watch({}); // The card went away (a rate change rebinds the gadget): check soon and watch the new one.
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            return true;
+        }
+        return rate;
+    };
     // One period from the ring, converted to the computer's rate unless it
     // is the device's and locked, then encoded.
     auto render_period = [&] {
@@ -395,12 +433,17 @@ void UsbAudioOutput::run(std::string requested) {
         ++xruns; pending = 0;
         if ((error != -EPIPE && error != -ESTRPIPE) || snd_pcm_prepare(playback.pcm) < 0) { close(); set_state(UsbStreamState::Failed); }
     };
+    std::string target_control; // The gadget's controls, as the last check found them
+    bool flowing = false;       // The computer has taken packets since the stream opened
+    snd_pcm_uframes_t sent = 0; // Frames written since the stream opened, until it flows
     auto next_check = Clock::now();
     while (running.load()) {
         auto now = Clock::now();
         if (now >= next_check) {
             next_check = now + std::chrono::milliseconds(250);
             Target target = find_target(requested, "Playback Rate");
+            target_control = target.control;
+            if (!playback.pcm) watch({}); // Subscribed anew below: a rebind makes a new card under the same name.
             { std::lock_guard<std::mutex> lock(device_lock); device_name = target.pcm; }
             if (target.pcm.empty() || target.rate == 0) {
                 close(); set_state(target.pcm.empty() ? UsbStreamState::Missing : UsbStreamState::Waiting);
@@ -422,18 +465,34 @@ void UsbAudioOutput::run(std::string requested) {
                     fill_target.store(pitch_control.empty() ? prime_frames : locked_target(input_rate, unsigned(playback.period)));
                     ring.flush();
                     stream_rate.store(playback.rate); stream_channels.store(playback.channels); stream_width.store(playback.width);
-                    accepting.store(true, std::memory_order_release);
+                    flowing = false; sent = 0; // accepting waits until the computer takes packets (below)
                     set_state(UsbStreamState::Running);
                 } else set_state(UsbStreamState::Failed);
             }
         }
-        if (!playback.pcm) { std::this_thread::sleep_for(std::chrono::milliseconds(20)); continue; }
+        watch(playback.pcm ? std::string() : target_control);
+        if (!playback.pcm) {
+            if (wait_for_rate(next_check)) next_check = Clock::now();
+            continue;
+        }
         int ready = snd_pcm_wait(playback.pcm, 50);
         // A period lasts a few milliseconds, so a 50 ms wait means the computer
         // stopped recording: check at once rather than letting the ring overflow.
         if (ready == 0) next_check = Clock::now();
         snd_pcm_sframes_t room = ready < 0 ? ready : snd_pcm_avail_update(playback.pcm);
         if (room < 0) { recover(room); continue; }
+        // The stream opens as the computer selects it, which can be a while before it takes the first packet: the
+        // buffer, written full (which starts the stream), then stays full. Audio is accepted, and the ring and its
+        // lock measured, from the first room after that, so nothing piles up in the ring before the computer reads
+        // (silence until then).
+        if (!flowing && sent >= playback.buffer && room > 0) {
+            flowing = true;
+            ring.flush();
+            fill_sum = 0; fill_count = 0; check_frames = 0; checks = 0; astray = 0; low = ~0u;
+            pitch_lock.reset();
+            if (!pitch_control.empty()) set_pitch(pitch_control, playback_pitch, nominal_pitch);
+            accepting.store(true, std::memory_order_release);
+        }
         while (room > 0 && playback.pcm) {
             if (!pending) render_period();
             auto written = snd_pcm_writei(playback.pcm, raw.data() + offset * playback.channels * playback.width,
@@ -441,11 +500,13 @@ void UsbAudioOutput::run(std::string requested) {
             if (written == -EAGAIN || written == 0) break;
             if (written < 0) { recover(written); break; }
             offset += snd_pcm_uframes_t(written); pending -= snd_pcm_uframes_t(written); room -= written;
+            if (!flowing) sent += snd_pcm_uframes_t(written);
             fill_sum += ring.buffered(); ++fill_count; check_frames += unsigned(written);
             if (check_frames >= playback.rate / 4) check();
         }
     }
     close();
+    watch({});
 }
 
 UsbStreamStats UsbAudioOutput::stats() const {

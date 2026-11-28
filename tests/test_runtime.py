@@ -71,7 +71,7 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "usb-audio"
             symbols = ("snd_card_next", "snd_ctl_open", "snd_ctl_close", "snd_ctl_card_info", "snd_ctl_card_info_get_driver",
-                       "snd_ctl_card_info_get_id", "snd_ctl_elem_read", "snd_ctl_elem_write", "snd_pcm_open", "snd_pcm_close", "snd_pcm_wait",
+                       "snd_ctl_card_info_get_id", "snd_ctl_elem_read", "snd_ctl_elem_write", "snd_ctl_subscribe_events", "snd_pcm_open", "snd_pcm_close", "snd_pcm_wait",
                        "snd_pcm_readi", "snd_pcm_writei", "snd_pcm_avail_update", "snd_pcm_hw_params_get_channels_min")
             # Optimised: the drift test converts four minutes of host audio.
             compile_fixture(binary, "tests/usb_audio.cpp", "src/drivers/usb_audio.cpp", "src/drivers/platform.cpp",
