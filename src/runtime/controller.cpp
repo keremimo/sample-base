@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "runtime/controller.h"
 #include "drivers/usb_gadget.h"
 #include "runtime/control_socket.h"

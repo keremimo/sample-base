@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // SD card access without a card reader or a storage service: the card found
 // among edisksd's volumes, nothing lent without one, and a card an earlier
 // run left lent taken back at start.

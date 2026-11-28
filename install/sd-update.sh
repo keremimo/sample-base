@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # Installs an app update from a release zip on the SD card (docs/APPS.md,
 # "Updates from the card").
 #

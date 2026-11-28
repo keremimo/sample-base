@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "runtime/inventory.h"
 #include "drivers/audio.h"
 #include "drivers/hardware_midi.h"

@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # Builds the modules under kernel/<name>/ (each folder's Kbuild names its
 # module) against an MPC Sample kernel and leaves each .ko beside its source,
 # where it is kept in Git (tools/check_private_files.py lets a module through

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Fetch checksum-verified public platform references into ignored local storage.
 
 This is a documentation/research helper, not a build dependency or installer.

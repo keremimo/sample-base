@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // sample-base entry point: picks the app and runs one mode. The runtime
 // (src/runtime/) hosts any App; to run your own, add it to make_app() and
 // start it with --app, or keep your app in its own repository with this one

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-only
+ * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * File Sharing's module (kernel/ksmbd: the kernel's SMB server, GPL-2.0+,
  * built by tools/build_kernel_modules.sh) inside the binary, loaded by
  * src/drivers/file_share.cpp: one build for firmware 1.3.0.12's kernel

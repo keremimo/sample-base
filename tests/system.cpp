@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // The system page's model: panels, the CPU meter and history, picking
 // readings and the text the page shows.
 #include "demos/system/system.h"

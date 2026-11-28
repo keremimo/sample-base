@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "drivers/clock_io.h"
 #include <linux/gpio.h>
 #include <fcntl.h>

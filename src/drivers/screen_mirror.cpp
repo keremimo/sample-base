@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "drivers/screen_mirror.h"
 #include "drivers/jpeg_encoder.h"
 #include "drivers/kernel_module.h"

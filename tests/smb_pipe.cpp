@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // File Sharing's share list on IPC$ (drivers/smb_pipe.h): a bind taken with
 // NDR and other transfer syntaxes refused, srvsvc's NetrShareEnum and
 // NetrShareGetInfo answered in NDR, replies cut to the computer's fragment

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // A fake UAC2 gadget card in front of ALSA's null PCM, both ways: discovery
 // by driver name, waiting while the host is idle, opening at the host's rate,
 // sample conversion to and from the device's rate and reopening when the host

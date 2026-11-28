@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "drivers/display.h"
 #include "drivers/display_damage.h"
 #include "drivers/panel_driver.h"

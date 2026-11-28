@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-only
+ * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * Screen Mirror's kernel modules (GPL, built by tools/build_kernel_modules.sh)
  * inside the binary, loaded by src/drivers/screen_mirror.cpp: kernel/uvc's
  * webcam function and kernel/vepu's JPEG encoder switch. UVC_MODULE and

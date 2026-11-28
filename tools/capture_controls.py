@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Guided capture of the MPC Sample's non-pad controls.
 
 A running sample-base session shows each step on the device screen. Use the

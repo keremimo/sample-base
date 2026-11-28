@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // A fake configfs gadget in a temporary folder: the UAC2 function found among
 // others, its playback mask widened with the gadget unbound and bound again,
 // the original saved once, and nothing touched when it already fits.

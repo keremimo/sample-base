@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Make a sample-base demo release zip: an autorun folder to copy to the root
 of the MPC Sample's microSD card, plus a README and the licences. No SSH,
 network or computer is needed on the MPC side.

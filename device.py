@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Stage sample-base in MPC RAM and switch back to the existing stock service."""
 import argparse
 import hashlib

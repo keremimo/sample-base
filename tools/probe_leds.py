@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Guided measurement of the MPC Sample's button LED values.
 
 A running sample-base session lights one button LED at a time with one

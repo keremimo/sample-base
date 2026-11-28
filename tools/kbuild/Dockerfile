@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # Builds kernel/ modules against the MPC's kernel (tools/build_kernel_modules.sh):
 # the compiler and tools a prepared tree in .local/kbuild needs.
 FROM ubuntu:24.04

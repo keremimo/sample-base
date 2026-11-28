@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # Build, strip and package a demo release: ./release.sh v0.1.0
 # writes dist/sample-base-demos-MPC-Sample-<version>.zip and its .sha256.
 set -eu

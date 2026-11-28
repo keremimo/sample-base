@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #pragma once
 #include "demos/page.h"
 #include "demos/pad_touch/pad_touch_demo.h"

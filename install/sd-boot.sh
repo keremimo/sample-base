@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # SD autorun entry for an installed app: hand off at once so the stock
 # app's autorun runner never waits. $1 is the card's sample-base folder.
 set -eu

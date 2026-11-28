@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 /*
  * The RK3566's hardware JPEG encoder (the RK3568 VEPU, video-codec@fdee0000)
  * for Screen Mirror (src/drivers/screen_mirror.h). The MPC's device tree

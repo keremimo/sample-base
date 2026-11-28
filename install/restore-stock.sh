@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 set -eu
 # Shutdown already owns service teardown; do not restart an application then.
 state=$(/bin/systemctl is-system-running 2>/dev/null || true)

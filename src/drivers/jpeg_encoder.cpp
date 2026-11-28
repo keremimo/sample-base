@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "drivers/jpeg_encoder.h"
 #include <fcntl.h>
 #include <linux/videodev2.h>

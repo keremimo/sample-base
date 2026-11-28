@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // Screen Mirror's picture: whole-number scales placed and centred, BT.601
 // video-range YUYV, black around the screen, a colour exact at an even scale
 // and its Cb/Cr shared with the neighbour where a pair spans two pixels.

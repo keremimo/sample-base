@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """The source layers stay apart: see AGENTS.md and docs/APPS.md."""
 from pathlib import Path
 import re

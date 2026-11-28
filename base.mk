@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # The sample-base build: JUCE, the base layers (surface/, dsp/, drivers/,
 # runtime/) and the app sources the including Makefile lists. This
 # repository's Makefile includes it, and so does an app kept in its own

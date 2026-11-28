@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #pragma once
 #include "drivers/card_share.h"
 #include "drivers/clock_io.h"

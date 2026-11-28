@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 # Starts the installed app from the card, as device.py start does: the
 # binary and recovery script are checked, copied into a new RAM directory
 # and run by a session unit that stops the stock app and starts it again on

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "drivers/audio.h"
 #include "drivers/codec_power.h"
 #include "drivers/direct_monitor.h"

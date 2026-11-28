@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "demos/synth/pad_scale.h"
 #include "demos/synth/synth.h"
 #include <cassert>

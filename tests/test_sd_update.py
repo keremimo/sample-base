@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 """Tests install/sd-update.sh against a fake card, /run and systemctl, with
 zips signed by a test key, and src/drivers/sd_update.cpp."""
 import hashlib

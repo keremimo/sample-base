@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 // The control protocol: Controller::command() answers each text command sent
 // through ControlServer (`sample-base --ctl ...`). It runs on the service
 // thread; anything the MIDI thread must do is queued for it. The runtime's

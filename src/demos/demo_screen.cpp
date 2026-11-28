@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Kerem Kilic (Ellic Studio)
 #include "demos/demo_screen.h"
 
 void draw_demo_screen(juce::Graphics& g, const Ui& ui, const DemoView& view) {

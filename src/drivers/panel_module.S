@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-only
+ * Copyright (C) 2026 Kerem Kilic (Ellic Studio)
  * kernel/panel's driver module (GPL-2.0+, built by
  * tools/build_kernel_modules.sh) inside the binary, loaded by
  * src/drivers/panel_driver.cpp: one build for firmware 1.3.0.12's kernel
